@@ -22,28 +22,27 @@ class TabsDataModel(QAbstractTableModel):
         if role == Qt.DisplayRole:
             # Return the value from the data list
             value = self._data[index.row()][index.column()]
-            
+
             # Format rating as stars
             if index.column() == 5:  # Rating column
                 return "★" * int(value)
-            
+
             # Handle different data types appropriately
             if isinstance(value, (float, int)):
                 return str(value)
             return str(value)
 
         if role == Qt.BackgroundRole:
-            # Color rows alternately for better readability
-            if index.row() % 2 == 0:
-                return QColor(240, 240, 240)
-                
+            # Remove custom background coloring to let stylesheet handle it
+            return None
+
         if role == Qt.TextAlignmentRole:
             # Center align the rating column
             if index.column() == 5:  # Rating column
                 return Qt.AlignCenter
-                
+
         if role == Qt.ForegroundRole:
-            # Make stars yellow
+            # Make stars yellow/gold
             if index.column() == 5:  # Rating column
                 return QColor("#FFD700")  # Gold color
 

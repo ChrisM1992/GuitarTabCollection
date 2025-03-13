@@ -11,7 +11,8 @@ from tabs_data_model import TabsDataModel
 from database_manager import DatabaseManager
 from add_tab_dialog import AddTabDialog
 from batch_add_dialog import BatchAddDialog
-
+from PyQt5.QtWidgets import (QSizePolicy)
+from PyQt5.QtCore import Qt
 
 class AdvancedFilterDialog(QDialog):
     """Dialog for advanced filtering"""
@@ -179,8 +180,17 @@ class GuitarTabsApp(QMainWindow):
         # Get list of band names
         bands = [band[1] for band in self.db_manager.get_all_bands()]
 
+        # Get tunings from database
+        tunings = self.db_manager.get_all_tunings()
+
         # Show dialog
         dialog = AddTabDialog(bands, self)
+
+        # Set the tunings from database
+        dialog.tunings = tunings
+        dialog.tuning.clear()
+        dialog.tuning.addItems(tunings)
+
         if dialog.exec_() == QDialog.Accepted:
             # Get data from dialog
             tab_data = dialog.getTabData()
@@ -198,6 +208,42 @@ class GuitarTabsApp(QMainWindow):
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Failed to add tab: {str(e)}")
 
+    # Update batch_add_dialog method similarly:
+    def show_batch_add_dialog(self):
+        """Show dialog to add multiple tabs at once"""
+        # Get list of band names from the database
+        bands = [band[1] for band in self.db_manager.get_all_bands()]
+
+        # Get tunings from database
+        tunings = self.db_manager.get_all_tunings()
+
+        # Create and show the batch add dialog
+        dialog = BatchAddDialog(bands, self)
+
+        # Set the tunings from database
+        dialog.tunings = tunings
+        dialog.tuning.clear()
+        dialog.tuning.addItems(tunings)
+
+        # Execute the dialog and wait for user input
+        if dialog.exec_() == QDialog.Accepted:
+            try:
+                # Get the entered data
+                tabs_data = dialog.getTabsData()
+
+                # Add the tabs to the database
+                for tab in tabs_data:
+                    self.db_manager.add_tab(tab)
+
+                # Refresh the table view
+                self.load_data()
+
+                # Show success message
+                self.statusBar().showMessage(f"Successfully added {len(tabs_data)} tabs")
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to add tabs: {str(e)}")
+
     def initUI(self):
         # Main layout
         central_widget = QWidget()
@@ -206,6 +252,7 @@ class GuitarTabsApp(QMainWindow):
 
         # Top controls
         top_controls = QHBoxLayout()
+        top_controls.setAlignment(Qt.AlignLeft)  # Align buttons to the left
 
         # Add new tab button
         self.add_btn = QPushButton("Add New Tab")
@@ -213,7 +260,7 @@ class GuitarTabsApp(QMainWindow):
         top_controls.addWidget(self.add_btn)
 
         # Batch add button
-        self.batch_add_btn = QPushButton("Batch Add")
+        self.batch_add_btn = QPushButton("Add multiple")
         self.batch_add_btn.clicked.connect(self.show_batch_add_dialog)
         top_controls.addWidget(self.batch_add_btn)
 
@@ -263,6 +310,17 @@ class GuitarTabsApp(QMainWindow):
 
         # Status bar
         self.statusBar().showMessage("Ready")
+
+        # In initUI method after creating each button
+        self.add_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.add_btn.adjustSize()
+
+        self.batch_add_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.batch_add_btn.adjustSize()
+
+        self.delete_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.delete_btn.adjustSize()
+
 
     def show_batch_add_dialog(self):
         """Show dialog to add multiple tabs at once"""

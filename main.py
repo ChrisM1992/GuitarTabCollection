@@ -11,41 +11,61 @@ def main():
 
     # Apply a stylesheet for additional styling
     app.setStyleSheet("""
-        QMainWindow {
-            background-color: white;
+        QMainWindow, QDialog {
+            background-color: #2d2d30;
+            color: #e0e0e0;
         }
         QTableView {
-            selection-background-color: #b3d9ff;
-            selection-color: black;
-            gridline-color: #d9d9d9;
+            QTableView {
+            background-color: #202022;
+            color: #e0e0e0;
+            selection-background-color: #0078d7;
+            selection-color: white;
+            gridline-color: #3e3e42;
+            alternate-background-color: #2a2a2d;  /* Explicitly set alternate row color */
+}
         }
         QPushButton {
-            background-color: #8a2be2;
+            background-color: #ff5722;
             color: white;
             border: none;
             padding: 8px 16px;
             border-radius: 4px;
         }
         QPushButton:hover {
-            background-color: #9932cc;
+            background-color: #ff7043;
         }
         QTabWidget::pane {
-            border: 1px solid #d9d9d9;
+            border: 1px solid #3e3e42;
         }
         QTabBar::tab {
-            background-color: #f0f0f0;
+            background-color: #333337;
+            color: #e0e0e0;
             padding: 8px 16px;
         }
         QTabBar::tab:selected {
-            background-color: white;
-            border-bottom: 2px solid #4CAF50;
+            background-color: #2d2d30;
+            border-bottom: 2px solid #e89018;
         }
         QHeaderView::section {
-            background-color: #f0f0f0;
+            background-color: #3e3e42;
+            color: #e0e0e0;
             padding: 6px;
             border: none;
-            border-right: 1px solid #d9d9d9;
-            border-bottom: 1px solid #d9d9d9;
+        }
+        QLabel, QComboBox, QLineEdit {
+            color: #e0e0e0;
+        }
+        QComboBox, QLineEdit, QTextEdit, QSpinBox {
+            background-color: #333337;
+            color: #e0e0e0;
+            border: 1px solid #3e3e42;
+            padding: 4px;
+        }
+        QComboBox QAbstractItemView {
+            background-color: #333337;
+            color: #e0e0e0;
+            selection-background-color: #0078d7;
         }
     """)
 

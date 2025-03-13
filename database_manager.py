@@ -1,6 +1,7 @@
 import sqlite3
 import pandas as pd
 
+
 class DatabaseManager:
     """Manager for SQLite database operations"""
 
@@ -35,6 +36,19 @@ class DatabaseManager:
             FOREIGN KEY (band_id) REFERENCES bands (id)
         )
         ''')
+
+        # Create tunings table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS tunings (
+            id INTEGER PRIMARY KEY,
+            name TEXT UNIQUE NOT NULL
+        )
+        ''')
+
+        # Insert default tunings if they don't exist
+        default_tunings = ["E A D G B E", "D A D G B E", "C G C F A D", "D G D G B D", "E B E G# B E", "D A D F# A D"]
+        for tuning in default_tunings:
+            cursor.execute("INSERT OR IGNORE INTO tunings (name) VALUES (?)", (tuning,))
 
         conn.commit()
         conn.close()
@@ -105,6 +119,31 @@ class DatabaseManager:
 
         conn.close()
         return tabs
+
+    def get_all_tunings(self):
+        """Get all tunings from the database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT name FROM tunings ORDER BY name")
+        tunings = [row[0] for row in cursor.fetchall()]
+
+        conn.close()
+        return tunings
+
+    def add_tuning(self, tuning_name):
+        """Add a new tuning to the database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("INSERT OR IGNORE INTO tunings (name) VALUES (?)", (tuning_name,))
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
 
     def add_tab(self, tab_data):
         """Add a new tab to the database"""

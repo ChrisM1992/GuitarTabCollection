@@ -15,7 +15,7 @@ class BatchAddDialog(QDialog):
         self.bands = bands
 
         # Common tunings
-        self.tunings = ["E A D G B E", "D A D G B E", "C G C F A D", "D G D G B D", "E B E G# B E", "D A D F# A D"]
+        self.tunings = ["E A D G B E", "D G C F A D", "C G C F A D", "D A D G B E", "A# F A# D# G C"]
 
         # Create layout
         layout = QFormLayout(self)
@@ -59,7 +59,7 @@ class BatchAddDialog(QDialog):
         layout.addRow("Tuning:", tuning_layout)
 
         # Rating (default)
-        self.rating = 3
+        self.rating = 1
 
         # Genre
         self.genre = QLineEdit()
@@ -85,10 +85,16 @@ class BatchAddDialog(QDialog):
         new_tuning, ok = QInputDialog.getText(self, "Add New Tuning", "Enter tuning name:")
         if ok and new_tuning:
             if new_tuning not in self.tunings:
-                self.tuning.addItem(new_tuning)
-                self.tunings.append(new_tuning)
-                # Select the newly added tuning
-                self.tuning.setCurrentText(new_tuning)
+                # Add to database
+                try:
+                    self.parent().db_manager.add_tuning(new_tuning)
+                    # Update combobox
+                    self.tuning.addItem(new_tuning)
+                    self.tunings.append(new_tuning)
+                    # Select the newly added tuning
+                    self.tuning.setCurrentText(new_tuning)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to add tuning: {str(e)}")
 
     def getTabsData(self):
         """Get the data for all tabs to be added"""
