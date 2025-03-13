@@ -218,8 +218,8 @@ class GuitarTabsApp(QMainWindow):
         top_controls.addWidget(self.batch_add_btn)
 
         # Delete tab button
-        self.delete_btn = QPushButton("Delete Selected Tab")
-        self.delete_btn.clicked.connect(self.delete_selected_tab)
+        self.delete_btn = QPushButton("Delete Selected Tab(s)")
+        self.delete_btn.clicked.connect(self.delete_selected_tabs)
         top_controls.addWidget(self.delete_btn)
 
         main_layout.addLayout(top_controls)
@@ -347,7 +347,7 @@ class GuitarTabsApp(QMainWindow):
                 all_tabs_table.setSortingEnabled(True)
                 all_tabs_table.setAlternatingRowColors(True)
                 all_tabs_table.setSelectionBehavior(QTableView.SelectRows)
-
+                all_tabs_table.setSelectionMode(QTableView.ExtendedSelection)
                 # Add to tabs widget
                 self.tabs_widget.addTab(all_tabs_table, "All Tabs")
 
@@ -370,6 +370,7 @@ class GuitarTabsApp(QMainWindow):
                     band_table.setSortingEnabled(True)
                     band_table.setAlternatingRowColors(True)
                     band_table.setSelectionBehavior(QTableView.SelectRows)
+                    band_table.setSelectionMode(QTableView.ExtendedSelection)
 
                     # Add to tabs widget
                     self.tabs_widget.addTab(band_table, band_name)
@@ -449,41 +450,57 @@ class GuitarTabsApp(QMainWindow):
         # Apply text filter
         proxy_model.setFilterFixedString(filter_text)
 
-    def delete_selected_tab(self):
-        """Delete the selected tab"""
+    def delete_selected_tabs(self):
+        """Delete the selected tabs"""
         # Get current tab widget
         current_tab = self.tabs_widget.currentWidget()
         if not isinstance(current_tab, QTableView):
             return
 
-        # Get selected row
-        selected_indexes = current_tab.selectedIndexes()
-        if not selected_indexes:
-            QMessageBox.warning(self, "Warning", "No tab selected.")
+        # Get selected rows
+        selection_model = current_tab.selectionModel()
+        if not selection_model.hasSelection():
+            QMessageBox.warning(self, "Warning", "No tabs selected.")
             return
 
-        # Get row and ID
-        proxy_model = current_tab.model()
-        source_model = proxy_model.sourceModel()
-        proxy_row = selected_indexes[0].row()
-        source_row = proxy_model.mapToSource(proxy_model.index(proxy_row, 0)).row()
-        tab_id = source_model._data[source_row][0]
+        # Get all selected row indices
+        selected_rows = set()
+        for index in selection_model.selectedIndexes():
+            selected_rows.add(index.row())
 
         # Confirm deletion
-        if QMessageBox.question(self, "Confirm Deletion", "Are you sure you want to delete this tab?",
-                                QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+        if QMessageBox.question(
+                self,
+                "Confirm Deletion",
+                f"Are you sure you want to delete {len(selected_rows)} selected tab(s)?",
+                QMessageBox.Yes | QMessageBox.No
+        ) == QMessageBox.Yes:
             try:
-                # Delete from database
-                self.db_manager.delete_tab(tab_id)
+                # Get proxy model and source model
+                proxy_model = current_tab.model()
+                source_model = proxy_model.sourceModel()
+
+                # Collect all tab IDs to delete (from last to first to avoid index shifting)
+                tab_ids = []
+                for proxy_row in sorted(list(selected_rows), reverse=True):
+                    # Map proxy index to source index
+                    source_row = proxy_model.mapToSource(proxy_model.index(proxy_row, 0)).row()
+                    # Get tab ID from first column
+                    tab_id = source_model._data[source_row][0]
+                    tab_ids.append(tab_id)
+
+                # Delete all tabs from database
+                for tab_id in tab_ids:
+                    self.db_manager.delete_tab(tab_id)
 
                 # Reload data
                 self.load_data()
 
                 # Show success message
-                self.statusBar().showMessage("Tab deleted successfully")
+                self.statusBar().showMessage(f"{len(tab_ids)} tabs deleted successfully")
 
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to delete tab: {str(e)}")
+                QMessageBox.critical(self, "Error", f"Failed to delete tabs: {str(e)}")
 
     # Event handlers for dragging the window
     def mousePressEvent(self, event):
