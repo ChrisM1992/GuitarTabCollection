@@ -53,7 +53,11 @@ class TabsDataModel(QAbstractTableModel):
         if role == Qt.EditRole:
             row = index.row()
             column = index.column()
-
+            
+            # Prevent edits to Band, Album, Title columns
+            if column in [1, 2, 3]:
+                return False
+                
             # Create a new row list with the updated value
             new_row = list(self._data[row])
             new_row[column] = value
@@ -67,8 +71,9 @@ class TabsDataModel(QAbstractTableModel):
         return False
 
     def flags(self, index):
-        # Make cells editable
-        return super().flags(index) | Qt.ItemIsEditable
+        def flags(self, index):
+            source_index = self.mapToSource(index)
+            return self.sourceModel().flags(source_index)
 
     def addRow(self, row_data):
         # Add new row to the model
