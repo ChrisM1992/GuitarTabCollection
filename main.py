@@ -41,8 +41,8 @@ def main():
             min-width: 120px;
         }
         QPushButton#all_tabs_btn:checked {
-            background-color: #0078d7;
-            border-bottom: 3px solid #00b2ff;
+            background-color: #ff0000;
+            border-bottom: 3px solid #ff5555;
         }
         QPushButton#learned_tabs_btn:checked {
             background-color: #2d5a2d;
@@ -52,7 +52,7 @@ def main():
             background-color: #444448;
         }
         QPushButton#learned_tabs_btn:hover:!checked {
-            background-color: #3d4a3d;
+            background-color: #444448;
         }
         
         QTabWidget::pane {

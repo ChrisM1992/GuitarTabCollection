@@ -192,8 +192,8 @@ class GuitarTabsApp(QMainWindow):
         # Mode selection buttons
         self.mode_buttons_layout = QHBoxLayout()
         
-        # All Tabs button
-        self.all_tabs_btn = QPushButton("All Tabs")
+        # Tabs Collection button
+        self.all_tabs_btn = QPushButton("Tabs Collection")
         self.all_tabs_btn.setCheckable(True)
         self.all_tabs_btn.setChecked(True)
         self.all_tabs_btn.clicked.connect(lambda: self.switch_mode("all"))
@@ -208,13 +208,13 @@ class GuitarTabsApp(QMainWindow):
         # Style the mode buttons
         self.all_tabs_btn.setStyleSheet("""
             QPushButton:checked {
-                background-color: #0078d7;
+                background-color: #c19757;          
                 border: none;
             }
         """)
         self.learned_tabs_btn.setStyleSheet("""
             QPushButton:checked {
-                background-color: #4CAF50;
+                background-color: #c19757;
                 border: none;
             }
         """)
@@ -229,15 +229,15 @@ class GuitarTabsApp(QMainWindow):
         self.add_btn.clicked.connect(self.show_add_dialog)
         top_controls.addWidget(self.add_btn)
 
-        # Batch add button
+        # Add multiple button
         self.batch_add_btn = QPushButton("Add multiple")
         self.batch_add_btn.clicked.connect(self.show_batch_add_dialog)
         top_controls.addWidget(self.batch_add_btn)
 
-        # Delete tab button
-        self.delete_btn = QPushButton("Delete Selected Tab(s)")
-        self.delete_btn.clicked.connect(self.delete_selected_tabs)
-        top_controls.addWidget(self.delete_btn)
+        # Delete tab button isnt neccassary anymore to do delete on richt click 
+        #self.delete_btn = QPushButton("Delete Selected Tab(s)")
+        #self.delete_btn.clicked.connect(self.delete_selected_tabs)
+        #top_controls.addWidget(self.delete_btn)
 
         main_layout.addLayout(top_controls)
 
@@ -288,8 +288,8 @@ class GuitarTabsApp(QMainWindow):
         self.batch_add_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.batch_add_btn.adjustSize()
 
-        self.delete_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.delete_btn.adjustSize()
+        #self.delete_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        #self.delete_btn.adjustSize()
 
     def switch_mode(self, mode):
         """Switch between All Tabs and Learned Tabs views"""
