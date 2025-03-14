@@ -1,5 +1,6 @@
 import sqlite3
 import pandas as pd
+from datetime import datetime
 
 
 class DatabaseManager:
@@ -42,6 +43,16 @@ class DatabaseManager:
         CREATE TABLE IF NOT EXISTS tunings (
             id INTEGER PRIMARY KEY,
             name TEXT UNIQUE NOT NULL
+        )
+        ''')
+        
+        # Create learned_tabs table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS learned_tabs (
+            id INTEGER PRIMARY KEY,
+            tab_id INTEGER NOT NULL,
+            learned_date TEXT,
+            FOREIGN KEY (tab_id) REFERENCES tabs (id)
         )
         ''')
 
@@ -216,6 +227,10 @@ class DatabaseManager:
         cursor = conn.cursor()
 
         try:
+            # First delete any learned_tabs records
+            cursor.execute("DELETE FROM learned_tabs WHERE tab_id = ?", (tab_id,))
+            
+            # Then delete the tab
             cursor.execute("DELETE FROM tabs WHERE id = ?", (tab_id,))
             conn.commit()
 
@@ -224,6 +239,76 @@ class DatabaseManager:
             raise e
         finally:
             conn.close()
+
+    def add_to_learned(self, tab_id):
+        """Add a tab to the learned tabs table"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            # Check if tab is already in learned tabs
+            cursor.execute("SELECT id FROM learned_tabs WHERE tab_id = ?", (tab_id,))
+            if cursor.fetchone():
+                conn.close()
+                return False  # Already in learned tabs
+            
+            # Add to learned tabs with current date
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            cursor.execute(
+                "INSERT INTO learned_tabs (tab_id, learned_date) VALUES (?, ?)",
+                (tab_id, current_date)
+            )
+            conn.commit()
+            conn.close()
+            return True
+            
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            raise e
+
+    def remove_from_learned(self, tab_id):
+        """Remove a tab from the learned tabs table"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute("DELETE FROM learned_tabs WHERE tab_id = ?", (tab_id,))
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            raise e
+
+    def get_all_learned_tabs(self):
+        """Get all learned tabs from the database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute('''
+        SELECT t.id, b.name, t.album, t.title, t.tuning, t.rating, t.genre, lt.learned_date
+        FROM tabs t
+        JOIN bands b ON t.band_id = b.id
+        JOIN learned_tabs lt ON t.id = lt.tab_id
+        ORDER BY b.name, t.album, t.title
+        ''')
+
+        tabs = cursor.fetchall()
+        conn.close()
+        return tabs
+
+    def is_tab_learned(self, tab_id):
+        """Check if a tab is marked as learned"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT id FROM learned_tabs WHERE tab_id = ?", (tab_id,))
+        result = cursor.fetchone() is not None
+        
+        conn.close()
+        return result
 
     def import_from_excel(self, excel_path):
         """Import data from Excel file"""

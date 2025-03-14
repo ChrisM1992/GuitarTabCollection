@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (QMainWindow, QTableView, QVBoxLayout,
                              QHBoxLayout, QWidget, QPushButton, QComboBox,
                              QLabel, QLineEdit, QHeaderView, QTabWidget,
                              QMessageBox, QFileDialog, QDialog, QFrame,
-                             QFormLayout, QDialogButtonBox)
+                             QFormLayout, QDialogButtonBox, QMenu, QAction)
 from PyQt5.QtCore import Qt, QSortFilterProxyModel, QPoint, QRegExp
 from PyQt5.QtGui import QFont, QIcon
 
@@ -13,6 +13,7 @@ from add_tab_dialog import AddTabDialog
 from batch_add_dialog import BatchAddDialog
 from PyQt5.QtWidgets import (QSizePolicy)
 from PyQt5.QtCore import Qt
+
 
 class AdvancedFilterDialog(QDialog):
     """Dialog for advanced filtering"""
@@ -168,81 +169,15 @@ class GuitarTabsApp(QMainWindow):
         app_dir = os.path.dirname(os.path.abspath(__file__))
         db_path = os.path.join(app_dir, "guitar_tabs.db")
         self.db_manager = DatabaseManager(db_path)
+        
+        # Track current view mode
+        self.current_view = "all"  # 'all' or 'learned'
 
         # Initialize UI
         self.initUI()
 
         # Load data
         self.load_data()
-
-    def show_add_dialog(self):
-        """Show dialog to add a new tab"""
-        # Get list of band names
-        bands = [band[1] for band in self.db_manager.get_all_bands()]
-
-        # Get tunings from database
-        tunings = self.db_manager.get_all_tunings()
-
-        # Show dialog
-        dialog = AddTabDialog(bands, self)
-
-        # Set the tunings from database
-        dialog.tunings = tunings
-        dialog.tuning.clear()
-        dialog.tuning.addItems(tunings)
-
-        if dialog.exec_() == QDialog.Accepted:
-            # Get data from dialog
-            tab_data = dialog.getTabData()
-            if tab_data:
-                try:
-                    # Add to database
-                    self.db_manager.add_tab(tab_data)
-
-                    # Reload data
-                    self.load_data()
-
-                    # Show success message
-                    self.statusBar().showMessage(f"Added new tab: {tab_data['title']} by {tab_data['band']}")
-
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Failed to add tab: {str(e)}")
-
-    # Update batch_add_dialog method similarly:
-    def show_batch_add_dialog(self):
-        """Show dialog to add multiple tabs at once"""
-        # Get list of band names from the database
-        bands = [band[1] for band in self.db_manager.get_all_bands()]
-
-        # Get tunings from database
-        tunings = self.db_manager.get_all_tunings()
-
-        # Create and show the batch add dialog
-        dialog = BatchAddDialog(bands, self)
-
-        # Set the tunings from database
-        dialog.tunings = tunings
-        dialog.tuning.clear()
-        dialog.tuning.addItems(tunings)
-
-        # Execute the dialog and wait for user input
-        if dialog.exec_() == QDialog.Accepted:
-            try:
-                # Get the entered data
-                tabs_data = dialog.getTabsData()
-
-                # Add the tabs to the database
-                for tab in tabs_data:
-                    self.db_manager.add_tab(tab)
-
-                # Refresh the table view
-                self.load_data()
-
-                # Show success message
-                self.statusBar().showMessage(f"Successfully added {len(tabs_data)} tabs")
-
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to add tabs: {str(e)}")
 
     def initUI(self):
         # Main layout
@@ -254,6 +189,41 @@ class GuitarTabsApp(QMainWindow):
         top_controls = QHBoxLayout()
         top_controls.setAlignment(Qt.AlignLeft)  # Align buttons to the left
 
+        # Mode selection buttons
+        self.mode_buttons_layout = QHBoxLayout()
+        
+        # All Tabs button
+        self.all_tabs_btn = QPushButton("All Tabs")
+        self.all_tabs_btn.setCheckable(True)
+        self.all_tabs_btn.setChecked(True)
+        self.all_tabs_btn.clicked.connect(lambda: self.switch_mode("all"))
+        self.mode_buttons_layout.addWidget(self.all_tabs_btn)
+        
+        # Learned Tabs button
+        self.learned_tabs_btn = QPushButton("Learned")
+        self.learned_tabs_btn.setCheckable(True)
+        self.learned_tabs_btn.clicked.connect(lambda: self.switch_mode("learned"))
+        self.mode_buttons_layout.addWidget(self.learned_tabs_btn)
+        
+        # Style the mode buttons
+        self.all_tabs_btn.setStyleSheet("""
+            QPushButton:checked {
+                background-color: #0078d7;
+                border: none;
+            }
+        """)
+        self.learned_tabs_btn.setStyleSheet("""
+            QPushButton:checked {
+                background-color: #4CAF50;
+                border: none;
+            }
+        """)
+        
+        top_controls.addLayout(self.mode_buttons_layout)
+        
+        # Add some spacing
+        top_controls.addSpacing(20)
+        
         # Add new tab button
         self.add_btn = QPushButton("Add New Tab")
         self.add_btn.clicked.connect(self.show_add_dialog)
@@ -311,7 +281,7 @@ class GuitarTabsApp(QMainWindow):
         # Status bar
         self.statusBar().showMessage("Ready")
 
-        # In initUI method after creating each button
+        # Button sizes
         self.add_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.add_btn.adjustSize()
 
@@ -321,119 +291,274 @@ class GuitarTabsApp(QMainWindow):
         self.delete_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.delete_btn.adjustSize()
 
+    def switch_mode(self, mode):
+        """Switch between All Tabs and Learned Tabs views"""
+        if mode == self.current_view:
+            return
+            
+        self.current_view = mode
+        
+        # Update button states
+        if mode == "all":
+            self.all_tabs_btn.setChecked(True)
+            self.learned_tabs_btn.setChecked(False)
+        else:  # mode == "learned"
+            self.all_tabs_btn.setChecked(False)
+            self.learned_tabs_btn.setChecked(True)
+        
+        # Reload data with new mode
+        self.load_data()
 
-    def show_batch_add_dialog(self):
-        """Show dialog to add multiple tabs at once"""
-        # Get list of band names from the database
-        bands = [band[1] for band in self.db_manager.get_all_bands()]
-
-        # Create and show the batch add dialog
-        dialog = BatchAddDialog(bands, self)
-
-        # Execute the dialog and wait for user input
-        if dialog.exec_() == QDialog.Accepted:
-            try:
-                # Get the entered data
-                tabs_data = dialog.getTabsData()
-
-                # Add the tabs to the database
-                for tab in tabs_data:
-                    self.db_manager.add_tab(tab)
-
-                # Refresh the table view
-                self.load_data()
-
+    def show_context_menu(self, position):
+        """Show context menu for tabs table"""
+        # Get current table view
+        current_tab = self.tabs_widget.currentWidget()
+        if not isinstance(current_tab, QTableView):
+            return
+        
+        # Get selected index
+        index = current_tab.indexAt(position)
+        if not index.isValid():
+            return
+        
+        # Create menu
+        menu = QMenu()
+        
+        # Add actions
+        add_to_learned_action = menu.addAction("Mark as Learned")
+        delete_action = menu.addAction("Delete Tab")
+        
+        # Show menu
+        action = menu.exec_(current_tab.viewport().mapToGlobal(position))
+        
+        if action == add_to_learned_action:
+            self.add_tab_to_learned(current_tab, index)
+        elif action == delete_action:
+            self.delete_selected_tabs()
+    
+    def show_learned_context_menu(self, position):
+        """Show context menu for learned tabs table"""
+        # Get current table view
+        current_tab = self.tabs_widget.currentWidget()
+        if not isinstance(current_tab, QTableView):
+            return
+        
+        # Get selected index
+        index = current_tab.indexAt(position)
+        if not index.isValid():
+            return
+        
+        # Create menu
+        menu = QMenu()
+        
+        # Add action
+        remove_action = menu.addAction("Remove from Learned")
+        
+        # Show menu
+        action = menu.exec_(current_tab.viewport().mapToGlobal(position))
+        
+        if action == remove_action:
+            self.remove_from_learned(current_tab, index)
+    
+    def add_tab_to_learned(self, table_view, index):
+        """Add a tab to the learned tabs table"""
+        # Get proxy model and source model
+        proxy_model = table_view.model()
+        source_model = proxy_model.sourceModel()
+        
+        # Map proxy index to source index
+        source_row = proxy_model.mapToSource(index).row()
+        
+        # Get tab ID from first column
+        tab_id = source_model._data[source_row][0]
+        tab_title = source_model._data[source_row][3]  # Title column
+        
+        try:
+            # Add to learned tabs
+            success = self.db_manager.add_to_learned(tab_id)
+            
+            if success:
                 # Show success message
-                self.statusBar().showMessage(f"Successfully added {len(tabs_data)} tabs")
-
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to add tabs: {str(e)}")
-
-    def import_from_excel(self):
-        """Import data from Excel file"""
-        options = QFileDialog.Options()
-        file_name, _ = QFileDialog.getOpenFileName(self, "Open Excel File", "",
-                                                   "Excel Files (*.xlsx *.xls);;All Files (*)",
-                                                   options=options)
-        if file_name:
-            try:
-                # Confirm import
-                if QMessageBox.question(self, "Confirm Import",
-                                        "Importing will add new tabs from the Excel file. Continue?",
-                                        QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
-                    # Import data
-                    success = self.db_manager.import_from_excel(file_name)
-
-                    if success:
-                        # Reload data
-                        self.load_data()
-
-                        # Show success message
-                        self.statusBar().showMessage(f"Imported data from {os.path.basename(file_name)}")
-                    else:
-                        QMessageBox.warning(self, "Warning",
-                                            "Import completed with errors. Some data may not have been imported.")
-
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to import Excel file: {str(e)}")
+                self.statusBar().showMessage(f"'{tab_title}' marked as learned")
+                
+                # If we're in the learned view, reload to show the new tab
+                if self.current_view == "learned":
+                    self.load_data()
+            else:
+                self.statusBar().showMessage(f"'{tab_title}' already marked as learned")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to mark tab as learned: {str(e)}")
+    
+    def remove_from_learned(self, table_view, index):
+        """Remove a tab from the learned tabs table"""
+        # Get proxy model and source model
+        proxy_model = table_view.model()
+        source_model = proxy_model.sourceModel()
+        
+        # Map proxy index to source index
+        source_row = proxy_model.mapToSource(index).row()
+        
+        # Get tab ID from first column
+        tab_id = source_model._data[source_row][0]
+        tab_title = source_model._data[source_row][3]  # Title column
+        
+        try:
+            # Remove from learned tabs
+            self.db_manager.remove_from_learned(tab_id)
+            
+            # Reload data
+            self.load_data()
+            
+            # Show success message
+            self.statusBar().showMessage(f"'{tab_title}' removed from learned tabs")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to remove tab from learned: {str(e)}")
 
     def load_data(self):
         """Load data from the database"""
         try:
             # Clear existing tabs
             self.tabs_widget.clear()
-
+            
             # Get all bands
             bands = self.db_manager.get_all_bands()
-
-            # Create a tab for each band
-            columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre"]
-
-            # Create "All Tabs" tab
-            all_tabs = self.db_manager.get_all_tabs()
-            if all_tabs:
-                all_tabs_table = QTableView()
-                all_tabs_model = TabsDataModel(all_tabs, columns)
-                proxy_model = CustomProxyModel()
-                proxy_model.setSourceModel(all_tabs_model)
-                proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
-                all_tabs_table.setModel(proxy_model)
-
-                # Configure table appearance
-                all_tabs_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-                all_tabs_table.hideColumn(0)  # Hide ID column
-                all_tabs_table.setSortingEnabled(True)
-                all_tabs_table.setAlternatingRowColors(True)
-                all_tabs_table.setSelectionBehavior(QTableView.SelectRows)
-                all_tabs_table.setSelectionMode(QTableView.ExtendedSelection)
-                # Add to tabs widget
-                self.tabs_widget.addTab(all_tabs_table, "All Tabs")
-
-            # Create a tab for each band
-            for band_id, band_name in bands:
-                # Get tabs for this band
-                band_tabs = self.db_manager.get_tabs_for_band(band_id)
-
-                if band_tabs:
-                    band_table = QTableView()
-                    band_model = TabsDataModel(band_tabs, columns)
+            
+            if self.current_view == "all":
+                # Standard columns for all tabs view
+                columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre"]
+                
+                # Create "All Tabs" tab
+                all_tabs = self.db_manager.get_all_tabs()
+                if all_tabs:
+                    all_tabs_table = QTableView()
+                    all_tabs_model = TabsDataModel(all_tabs, columns)
                     proxy_model = CustomProxyModel()
-                    proxy_model.setSourceModel(band_model)
+                    proxy_model.setSourceModel(all_tabs_model)
                     proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
-                    band_table.setModel(proxy_model)
+                    all_tabs_table.setModel(proxy_model)
 
                     # Configure table appearance
-                    band_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-                    band_table.hideColumn(0)  # Hide ID column
-                    band_table.setSortingEnabled(True)
-                    band_table.setAlternatingRowColors(True)
-                    band_table.setSelectionBehavior(QTableView.SelectRows)
-                    band_table.setSelectionMode(QTableView.ExtendedSelection)
-
+                    all_tabs_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                    all_tabs_table.hideColumn(0)  # Hide ID column
+                    all_tabs_table.setSortingEnabled(True)
+                    all_tabs_table.setAlternatingRowColors(True)
+                    all_tabs_table.setSelectionBehavior(QTableView.SelectRows)
+                    all_tabs_table.setSelectionMode(QTableView.ExtendedSelection)
+                    
+                    # Enable context menu
+                    all_tabs_table.setContextMenuPolicy(Qt.CustomContextMenu)
+                    all_tabs_table.customContextMenuRequested.connect(self.show_context_menu)
+                    
                     # Add to tabs widget
-                    self.tabs_widget.addTab(band_table, band_name)
+                    self.tabs_widget.addTab(all_tabs_table, "All Tabs")
+                
+                # Create a tab for each band
+                for band_id, band_name in bands:
+                    # Get tabs for this band
+                    band_tabs = self.db_manager.get_tabs_for_band(band_id)
 
-            self.statusBar().showMessage(f"Loaded {len(bands)} bands")
+                    if band_tabs:
+                        band_table = QTableView()
+                        band_model = TabsDataModel(band_tabs, columns)
+                        proxy_model = CustomProxyModel()
+                        proxy_model.setSourceModel(band_model)
+                        proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
+                        band_table.setModel(proxy_model)
+
+                        # Configure table appearance
+                        band_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                        band_table.hideColumn(0)  # Hide ID column
+                        band_table.setSortingEnabled(True)
+                        band_table.setAlternatingRowColors(True)
+                        band_table.setSelectionBehavior(QTableView.SelectRows)
+                        band_table.setSelectionMode(QTableView.ExtendedSelection)
+                        
+                        # Enable context menu
+                        band_table.setContextMenuPolicy(Qt.CustomContextMenu)
+                        band_table.customContextMenuRequested.connect(self.show_context_menu)
+
+                        # Add to tabs widget
+                        self.tabs_widget.addTab(band_table, band_name)
+            
+            else:  # self.current_view == "learned"
+                # Columns for learned tabs view
+                columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Learned Date"]
+                
+                # Get learned tabs
+                learned_tabs = self.db_manager.get_all_learned_tabs()
+                
+                if learned_tabs:
+                    # Create "All Learned" tab
+                    learned_table = QTableView()
+                    learned_model = TabsDataModel(learned_tabs, columns)
+                    proxy_model = CustomProxyModel()
+                    proxy_model.setSourceModel(learned_model)
+                    proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
+                    learned_table.setModel(proxy_model)
+                    
+                    # Configure table appearance
+                    learned_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                    learned_table.hideColumn(0)  # Hide ID column
+                    learned_table.setSortingEnabled(True)
+                    learned_table.setAlternatingRowColors(True)
+                    learned_table.setSelectionBehavior(QTableView.SelectRows)
+                    learned_table.setSelectionMode(QTableView.ExtendedSelection)
+                    
+                    # Enable context menu for removing from learned
+                    learned_table.setContextMenuPolicy(Qt.CustomContextMenu)
+                    learned_table.customContextMenuRequested.connect(self.show_learned_context_menu)
+                    
+                    # Add to tabs widget
+                    self.tabs_widget.addTab(learned_table, "All Learned")
+                    
+                    # Create tabs for bands with learned songs
+                    band_learned_tabs = {}
+                    for tab in learned_tabs:
+                        band_name = tab[1]  # Band column
+                        if band_name not in band_learned_tabs:
+                            band_learned_tabs[band_name] = []
+                        band_learned_tabs[band_name].append(tab)
+                    
+                    # Create a tab for each band with learned songs
+                    for band_name, tabs in band_learned_tabs.items():
+                        band_table = QTableView()
+                        band_model = TabsDataModel(tabs, columns)
+                        proxy_model = CustomProxyModel()
+                        proxy_model.setSourceModel(band_model)
+                        proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
+                        band_table.setModel(proxy_model)
+                        
+                        # Configure table appearance
+                        band_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                        band_table.hideColumn(0)  # Hide ID column
+                        band_table.setSortingEnabled(True)
+                        band_table.setAlternatingRowColors(True)
+                        band_table.setSelectionBehavior(QTableView.SelectRows)
+                        band_table.setSelectionMode(QTableView.ExtendedSelection)
+                        
+                        # Enable context menu
+                        band_table.setContextMenuPolicy(Qt.CustomContextMenu)
+                        band_table.customContextMenuRequested.connect(self.show_learned_context_menu)
+                        
+                        # Add to tabs widget
+                        self.tabs_widget.addTab(band_table, band_name)
+                else:
+                    # Create an empty tab if no learned tabs
+                    empty_widget = QWidget()
+                    empty_layout = QVBoxLayout(empty_widget)
+                    empty_label = QLabel("No learned tabs yet. Right-click on tabs in 'All Tabs' view to mark them as learned.")
+                    empty_label.setAlignment(Qt.AlignCenter)
+                    empty_layout.addWidget(empty_label)
+                    self.tabs_widget.addTab(empty_widget, "Learned")
+            
+            # Update status bar
+            if self.current_view == "all":
+                self.statusBar().showMessage(f"Loaded {len(bands)} bands")
+            else:
+                learned_count = len(self.db_manager.get_all_learned_tabs())
+                self.statusBar().showMessage(f"Loaded {learned_count} learned tabs")
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load data: {str(e)}")
@@ -507,6 +632,76 @@ class GuitarTabsApp(QMainWindow):
 
         # Apply text filter
         proxy_model.setFilterFixedString(filter_text)
+
+    def show_add_dialog(self):
+        """Show dialog to add a new tab"""
+        # Get list of band names
+        bands = [band[1] for band in self.db_manager.get_all_bands()]
+
+        # Get tunings from database
+        tunings = self.db_manager.get_all_tunings()
+
+        # Show dialog
+        dialog = AddTabDialog(bands, self)
+
+        # Set the tunings from database if method available
+        if hasattr(dialog, 'tunings') and hasattr(dialog.tuning, 'clear'):
+            dialog.tunings = tunings
+            dialog.tuning.clear()
+            dialog.tuning.addItems(tunings)
+
+        if dialog.exec_() == QDialog.Accepted:
+            # Get data from dialog
+            tab_data = dialog.getTabData()
+            if tab_data:
+                try:
+                    # Add to database
+                    self.db_manager.add_tab(tab_data)
+
+                    # Reload data
+                    self.load_data()
+
+                    # Show success message
+                    self.statusBar().showMessage(f"Added new tab: {tab_data['title']} by {tab_data['band']}")
+
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to add tab: {str(e)}")
+
+    def show_batch_add_dialog(self):
+        """Show dialog to add multiple tabs at once"""
+        # Get list of band names from the database
+        bands = [band[1] for band in self.db_manager.get_all_bands()]
+
+        # Get tunings from database
+        tunings = self.db_manager.get_all_tunings()
+
+        # Create and show the batch add dialog
+        dialog = BatchAddDialog(bands, self)
+
+        # Set the tunings from database if method available
+        if hasattr(dialog, 'tunings') and hasattr(dialog.tuning, 'clear'):
+            dialog.tunings = tunings
+            dialog.tuning.clear()
+            dialog.tuning.addItems(tunings)
+
+        # Execute the dialog and wait for user input
+        if dialog.exec_() == QDialog.Accepted:
+            try:
+                # Get the entered data
+                tabs_data = dialog.getTabsData()
+
+                # Add the tabs to the database
+                for tab in tabs_data:
+                    self.db_manager.add_tab(tab)
+
+                # Refresh the table view
+                self.load_data()
+
+                # Show success message
+                self.statusBar().showMessage(f"Successfully added {len(tabs_data)} tabs")
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to add tabs: {str(e)}")
 
     def delete_selected_tabs(self):
         """Delete the selected tabs"""

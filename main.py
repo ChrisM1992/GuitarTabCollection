@@ -1,3 +1,4 @@
+# Update to main.py to add button styling
 import sys
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
@@ -16,14 +17,12 @@ def main():
             color: #e0e0e0;
         }
         QTableView {
-            QTableView {
             background-color: #202022;
             color: #e0e0e0;
             selection-background-color: #0078d7;
             selection-color: white;
             gridline-color: #3e3e42;
             alternate-background-color: #2a2a2d;  /* Explicitly set alternate row color */
-}
         }
         QPushButton {
             background-color: #ff5722;
@@ -35,6 +34,27 @@ def main():
         QPushButton:hover {
             background-color: #ff7043;
         }
+        
+        /* Mode switch buttons */
+        QPushButton#all_tabs_btn, QPushButton#learned_tabs_btn {
+            background-color: #333337;
+            min-width: 120px;
+        }
+        QPushButton#all_tabs_btn:checked {
+            background-color: #0078d7;
+            border-bottom: 3px solid #00b2ff;
+        }
+        QPushButton#learned_tabs_btn:checked {
+            background-color: #2d5a2d;
+            border-bottom: 3px solid #4CAF50;
+        }
+        QPushButton#all_tabs_btn:hover:!checked {
+            background-color: #444448;
+        }
+        QPushButton#learned_tabs_btn:hover:!checked {
+            background-color: #3d4a3d;
+        }
+        
         QTabWidget::pane {
             border: 1px solid #3e3e42;
         }
@@ -67,9 +87,22 @@ def main():
             color: #e0e0e0;
             selection-background-color: #0078d7;
         }
+        QMenu {
+            background-color: #333337;
+            color: #e0e0e0;
+            border: 1px solid #3e3e42;
+        }
+        QMenu::item:selected {
+            background-color: #0078d7;
+        }
     """)
 
     window = GuitarTabsApp()
+    
+    # Set object names for styling
+    window.all_tabs_btn.setObjectName("all_tabs_btn")
+    window.learned_tabs_btn.setObjectName("learned_tabs_btn")
+    
     window.show()
 
     sys.exit(app.exec_())
