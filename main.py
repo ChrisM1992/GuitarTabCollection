@@ -10,7 +10,7 @@ def main():
     # Set application style to Fusion for a modern look
     app.setStyle("Fusion")
 
-    # Apply a stylesheet for additional styling
+    # Apply a stylesheet for additional styling test
     app.setStyleSheet("""
         QMainWindow, QDialog {
             background-color: #2d2d30;
