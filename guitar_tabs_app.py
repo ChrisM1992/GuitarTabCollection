@@ -316,23 +316,38 @@ class GuitarTabsApp(QMainWindow):
         if not isinstance(current_tab, QTableView):
             return
         
-        # Get selected index
-        index = current_tab.indexAt(position)
-        if not index.isValid():
-            return
+        # Get selection model
+        selection_model = current_tab.selectionModel()
+        
+        # Check if we have a selection
+        if not selection_model.hasSelection():
+            # If no selection, check if the clicked position is on a valid item
+            index = current_tab.indexAt(position)
+            if not index.isValid():
+                return
+                
+            # If no selection but clicked on a valid item, select that item
+            selection_model.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+        
+        # Get selected count
+        selected_count = len(selection_model.selectedRows())
         
         # Create menu
         menu = QMenu()
         
-        # Add actions
-        add_to_learned_action = menu.addAction("Mark as Learned")
-        delete_action = menu.addAction("Delete Tab")
+        # Add actions (with count in the text)
+        mark_action_text = f"Mark {selected_count} as Learned" if selected_count > 1 else "Mark as Learned"
+        delete_action_text = f"Delete {selected_count} Tab(s)" if selected_count > 1 else "Delete Tab"
+        
+        add_to_learned_action = menu.addAction(mark_action_text)
+        delete_action = menu.addAction(delete_action_text)
         
         # Show menu
         action = menu.exec_(current_tab.viewport().mapToGlobal(position))
         
         if action == add_to_learned_action:
-            self.add_tab_to_learned(current_tab, index)
+            # Don't pass index, let the method use the selection model
+            self.add_tab_to_learned(current_tab)
         elif action == delete_action:
             self.delete_selected_tabs()
     
@@ -343,78 +358,143 @@ class GuitarTabsApp(QMainWindow):
         if not isinstance(current_tab, QTableView):
             return
         
-        # Get selected index
-        index = current_tab.indexAt(position)
-        if not index.isValid():
-            return
+        # Get selection model
+        selection_model = current_tab.selectionModel()
+        
+        # Check if we have a selection
+        if not selection_model.hasSelection():
+            # If no selection, check if the clicked position is on a valid item
+            index = current_tab.indexAt(position)
+            if not index.isValid():
+                return
+                
+            # If no selection but clicked on a valid item, select that item
+            selection_model.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+        
+        # Get selected count
+        selected_count = len(selection_model.selectedRows())
         
         # Create menu
         menu = QMenu()
         
-        # Add action
-        remove_action = menu.addAction("Remove from Learned")
+        # Add action (with count in the text)
+        remove_action_text = f"Remove {selected_count} from Learned" if selected_count > 1 else "Remove from Learned"
+        remove_action = menu.addAction(remove_action_text)
         
         # Show menu
         action = menu.exec_(current_tab.viewport().mapToGlobal(position))
         
         if action == remove_action:
-            self.remove_from_learned(current_tab, index)
+            # Don't pass index, let the method use the selection model
+            self.remove_from_learned(current_tab)
     
-    def add_tab_to_learned(self, table_view, index):
-        """Add a tab to the learned tabs table"""
-        # Get proxy model and source model
-        proxy_model = table_view.model()
-        source_model = proxy_model.sourceModel()
+    def add_tab_to_learned(self, table_view, index=None):
+        """Add tab(s) to the learned tabs table"""
+        # Get all selected rows
+        selection_model = table_view.selectionModel()
+        indices = selection_model.selectedRows()
         
-        # Map proxy index to source index
-        source_row = proxy_model.mapToSource(index).row()
+        if not indices:
+            # If no selected rows and a specific index was provided
+            if index and index.isValid():
+                indices = [index]
+            else:
+                return
         
-        # Get tab ID from first column
-        tab_id = source_model._data[source_row][0]
-        tab_title = source_model._data[source_row][3]  # Title column
+        added_count = 0
+        already_learned = 0
+        tab_title = ""  # Initialize variable for status message
         
-        try:
-            # Add to learned tabs
-            success = self.db_manager.add_to_learned(tab_id)
+        # Process each selected row
+        for idx in indices:
+            proxy_model = table_view.model()
+            source_model = proxy_model.sourceModel()
+            source_row = proxy_model.mapToSource(idx).row()
             
-            if success:
-                # Show success message
+            # Safely store title for single selection status message
+            if len(indices) == 1:
+                tab_title = source_model._data[source_row][3]  # Title column
+            
+            tab_id = source_model._data[source_row][0]
+            
+            try:
+                # Add to learned tabs
+                success = self.db_manager.add_to_learned(tab_id)
+                if success:
+                    added_count += 1
+                else:
+                    already_learned += 1
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to mark tab as learned: {str(e)}")
+        
+        # Status message - safely using tab_title only for single selections
+        if len(indices) == 1:
+            if added_count == 1:
                 self.statusBar().showMessage(f"'{tab_title}' marked as learned")
-                
-                # If we're in the learned view, reload to show the new tab
-                if self.current_view == "learned":
-                    self.load_data()
             else:
                 self.statusBar().showMessage(f"'{tab_title}' already marked as learned")
+        else:
+            self.statusBar().showMessage(f"{added_count} tabs marked as learned, {already_learned} already learned")
+        
+        # Reload if in Learned view
+        if self.current_view == "learned":
+            self.load_data()
+
+    def remove_from_learned(self, table_view, index=None):
+        """Remove tab(s) from the learned tabs table"""
+        # Get all selected rows
+        selection_model = table_view.selectionModel()
+        indices = selection_model.selectedRows()
+        
+        if not indices:
+            # If no selected rows and a specific index was provided
+            if index and index.isValid():
+                indices = [index]
+            else:
+                return
+        
+        # Confirm removal for multiple selections
+        if len(indices) > 1:
+            if QMessageBox.question(
+                    self,
+                    "Confirm Removal",
+                    f"Are you sure you want to remove {len(indices)} tabs from learned?",
+                    QMessageBox.Yes | QMessageBox.No
+            ) != QMessageBox.Yes:
+                return
                 
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to mark tab as learned: {str(e)}")
-    
-    def remove_from_learned(self, table_view, index):
-        """Remove a tab from the learned tabs table"""
-        # Get proxy model and source model
+        removed_count = 0
         proxy_model = table_view.model()
         source_model = proxy_model.sourceModel()
         
-        # Map proxy index to source index
-        source_row = proxy_model.mapToSource(index).row()
+        # Store tab title for single removal status message
+        tab_title = ""
+        last_processed_row = None
         
-        # Get tab ID from first column
-        tab_id = source_model._data[source_row][0]
-        tab_title = source_model._data[source_row][3]  # Title column
+        for idx in indices:
+            source_row = proxy_model.mapToSource(idx).row()
+            last_processed_row = source_row
+            
+            # Safely store title for single selection
+            if len(indices) == 1:
+                tab_title = source_model._data[source_row][3]  # Title column
+                
+            tab_id = source_model._data[source_row][0]
+            
+            try:
+                self.db_manager.remove_from_learned(tab_id)
+                removed_count += 1
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to remove tab from learned: {str(e)}")
         
-        try:
-            # Remove from learned tabs
-            self.db_manager.remove_from_learned(tab_id)
-            
-            # Reload data
-            self.load_data()
-            
-            # Show success message
+        # Reload data
+        self.load_data()
+        
+        # Show success message - safely use tab_title only if we have it
+        if len(indices) == 1 and tab_title:
             self.statusBar().showMessage(f"'{tab_title}' removed from learned tabs")
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to remove tab from learned: {str(e)}")
+        else:
+            self.statusBar().showMessage(f"{removed_count} tabs removed from learned tabs")
 
     def load_data(self):
         """Load data from the database"""
@@ -716,7 +796,7 @@ class GuitarTabsApp(QMainWindow):
             QMessageBox.warning(self, "Warning", "No tabs selected.")
             return
 
-        # Get all selected row indices
+        # Get all UNIQUE selected rows (avoid duplicates from multiple columns in same row)
         selected_rows = set()
         for index in selection_model.selectedIndexes():
             selected_rows.add(index.row())
@@ -754,6 +834,7 @@ class GuitarTabsApp(QMainWindow):
 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to delete tabs: {str(e)}")
+
 
     # Event handlers for dragging the window
     def mousePressEvent(self, event):
