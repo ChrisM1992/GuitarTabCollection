@@ -1,4 +1,5 @@
 import os
+import csv
 from PyQt5.QtWidgets import (QMainWindow, QTableView, QVBoxLayout,
                              QHBoxLayout, QWidget, QPushButton, QComboBox,
                              QLabel, QLineEdit, QHeaderView, QTabWidget,
@@ -229,10 +230,19 @@ class GuitarTabsApp(QMainWindow):
         self.add_btn.clicked.connect(self.show_add_dialog)
         top_controls.addWidget(self.add_btn)
 
-        # Add multiple button
+        # Add multiple button (ehem.batch_add_btn)
         self.batch_add_btn = QPushButton("Add multiple")
         self.batch_add_btn.clicked.connect(self.show_batch_add_dialog)
         top_controls.addWidget(self.batch_add_btn)
+
+        # CSV Import button
+        self.csv_import_btn = QPushButton("Import CSV")
+        self.csv_import_btn.clicked.connect(self.import_from_csv)
+        top_controls.addWidget(self.csv_import_btn)
+
+        # Apply same size policy as other buttons
+        self.csv_import_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.csv_import_btn.adjustSize()
 
         # Delete tab button isnt neccassary anymore to do delete on richt click 
         #self.delete_btn = QPushButton("Delete Selected Tab(s)")
@@ -850,3 +860,99 @@ class GuitarTabsApp(QMainWindow):
     def mouseReleaseEvent(self, event):
         self.drag_position = None
         event.accept()
+
+    def import_from_csv(self):
+        """Import tabs from a CSV file"""
+        # Open file dialog to select CSV file
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Import CSV", "", "CSV Files (*.csv);;All Files (*)"
+        )
+        
+        if not file_path:
+            return
+            
+        try:
+            # Read CSV file
+            import csv
+            
+            # Add debug messages
+            self.statusBar().showMessage(f"Reading CSV file: {file_path}")
+            
+            with open(file_path, 'r', encoding='utf-8-sig') as csv_file:  # Using utf-8-sig to handle BOM
+                # Read first line to determine column names
+                first_line = csv_file.readline().strip()
+                csv_file.seek(0)  # Go back to beginning of file
+                
+                # Print column names for debugging
+                print(f"CSV Headers: {first_line}")
+                
+                # Create reader with proper handling of column names
+                reader = csv.DictReader(csv_file)
+                print(f"Column names detected: {reader.fieldnames}")
+                
+                # Count successful imports
+                success_count = 0
+                error_count = 0
+                
+                # Process each row
+                for row in reader:
+                    try:
+                        # Debug print each row
+                        print(f"Processing row: {row}")
+                        
+                        # Handle potential typo in 'genre' column (genrge)
+                        genre = row.get('genre', '')
+                        if not genre:
+                            genre = row.get('genrge', '')
+                        
+                        # Skip empty rows
+                        if not row.get('band') or not row.get('title'):
+                            print("Skipping row without band or title")
+                            continue
+                        
+                        # Extract data from row (using get to handle missing columns)
+                        # Handle rating - use default 3 if empty or None
+                        rating_value = row.get('rating')
+                        if rating_value is None or rating_value == '':
+                            rating = 1
+                        else:
+                            try:
+                                rating = int(float(rating_value))
+                            except:
+                                rating = 1  # Default if conversion fails
+                        
+                        tab_data = {
+                            "band": row.get('band', '').strip(),
+                            "album": row.get('album', '').strip(),
+                            "title": row.get('title', '').strip(),
+                            "tuning": row.get('Tuning', row.get('tuning', '')).strip(),  # Try both capitalizations
+                            "rating": rating,
+                            "genre": genre.strip()
+                        }
+                        
+                        print(f"Adding tab: {tab_data}")
+                        
+                        # Add to database
+                        self.db_manager.add_tab(tab_data)
+                        success_count += 1
+                        
+                    except Exception as e:
+                        print(f"Error importing row: {e}")
+                        error_count += 1
+                        continue
+                
+                # Show detailed status message
+                status_msg = f"Imported {success_count} tabs"
+                if error_count > 0:
+                    status_msg += f", {error_count} errors"
+                
+                # Reload data
+                self.load_data()
+                
+                # Show success message
+                self.statusBar().showMessage(status_msg)
+                
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to import CSV file: {str(e)}")
