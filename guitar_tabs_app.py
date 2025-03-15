@@ -5,15 +5,16 @@ from PyQt5.QtWidgets import (QMainWindow, QTableView, QVBoxLayout,
                              QLabel, QLineEdit, QHeaderView, QTabWidget,
                              QMessageBox, QFileDialog, QDialog, QFrame,
                              QFormLayout, QDialogButtonBox, QMenu, QAction)
-from PyQt5.QtCore import Qt, QSortFilterProxyModel, QPoint, QRegExp
+from PyQt5.QtCore import Qt, QSortFilterProxyModel, QPoint, QRegExp, QItemSelectionModel
 from PyQt5.QtGui import QFont, QIcon
 
 from tabs_data_model import TabsDataModel
 from database_manager import DatabaseManager
 from add_tab_dialog import AddTabDialog
-from batch_add_dialog import BatchAddDialog
+from add_tab_multi import BatchAddDialog
 from PyQt5.QtWidgets import (QSizePolicy)
 from PyQt5.QtCore import Qt
+
 
 
 class AdvancedFilterDialog(QDialog):
@@ -171,6 +172,12 @@ class GuitarTabsApp(QMainWindow):
         db_path = os.path.join(app_dir, "guitar_tabs.db")
         self.db_manager = DatabaseManager(db_path)
         
+        # Clean up empty bands on startup - with error handling
+        try:
+            self.db_manager.clean_up_empty_bands()
+        except Exception as e:
+            print(f"Warning: Could not clean up empty bands on startup: {str(e)}")
+        
         # Track current view mode
         self.current_view = "all"  # 'all' or 'learned'
 
@@ -179,6 +186,7 @@ class GuitarTabsApp(QMainWindow):
 
         # Load data
         self.load_data()
+
 
     def initUI(self):
         # Main layout
@@ -321,45 +329,63 @@ class GuitarTabsApp(QMainWindow):
 
     def show_context_menu(self, position):
         """Show context menu for tabs table"""
-        # Get current table view
-        current_tab = self.tabs_widget.currentWidget()
-        if not isinstance(current_tab, QTableView):
-            return
-        
-        # Get selection model
-        selection_model = current_tab.selectionModel()
-        
-        # Check if we have a selection
-        if not selection_model.hasSelection():
-            # If no selection, check if the clicked position is on a valid item
+        try:
+            # Get current table view
+            current_tab = self.tabs_widget.currentWidget()
+            if not isinstance(current_tab, QTableView):
+                return
+            
+            # Get index at position
             index = current_tab.indexAt(position)
-            if not index.isValid():
+            
+            # Get selection model
+            selection_model = current_tab.selectionModel()
+            
+            # If no selection and clicked on a valid item, select that item
+            if not selection_model.hasSelection() and index.isValid():
+                selection_model.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+            
+            # Get selected count
+            selected_rows = selection_model.selectedRows()
+            selected_count = len(selected_rows)
+            
+            if selected_count == 0:
+                return  # No selection, don't show menu
+            
+            # Create menu
+            menu = QMenu()
+            
+            # Add actions based on current view
+            if self.current_view == "all":
+                mark_action_text = f"Mark {selected_count} as Learned" if selected_count > 1 else "Mark as Learned"
+                add_to_learned_action = menu.addAction(mark_action_text)
+            else:  # "learned" view
+                remove_action_text = f"Remove {selected_count} from Learned" if selected_count > 1 else "Remove from Learned"
+                remove_from_learned_action = menu.addAction(remove_action_text)
+            
+            # Always add delete action
+            delete_action_text = f"Delete {selected_count} Tab(s)" if selected_count > 1 else "Delete Tab"
+            delete_action = menu.addAction(delete_action_text)
+            
+            # Show menu
+            action = menu.exec_(current_tab.viewport().mapToGlobal(position))
+            
+            # Process action
+            if action is None:
                 return
                 
-            # If no selection but clicked on a valid item, select that item
-            selection_model.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+            if self.current_view == "all" and action == add_to_learned_action:
+                self.add_tab_to_learned(current_tab)
+            elif self.current_view == "learned" and action == remove_from_learned_action:
+                self.remove_from_learned(current_tab)
+            elif action == delete_action:
+                self.delete_selected_tabs()
         
-        # Get selected count
-        selected_count = len(selection_model.selectedRows())
-        
-        # Create menu
-        menu = QMenu()
-        
-        # Add actions (with count in the text)
-        mark_action_text = f"Mark {selected_count} as Learned" if selected_count > 1 else "Mark as Learned"
-        delete_action_text = f"Delete {selected_count} Tab(s)" if selected_count > 1 else "Delete Tab"
-        
-        add_to_learned_action = menu.addAction(mark_action_text)
-        delete_action = menu.addAction(delete_action_text)
-        
-        # Show menu
-        action = menu.exec_(current_tab.viewport().mapToGlobal(position))
-        
-        if action == add_to_learned_action:
-            # Don't pass index, let the method use the selection model
-            self.add_tab_to_learned(current_tab)
-        elif action == delete_action:
-            self.delete_selected_tabs()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"Error in context menu: {str(e)}")
+            self.statusBar().showMessage(f"Error in context menu: {str(e)}")
     
     def show_learned_context_menu(self, position):
         """Show context menu for learned tabs table"""
@@ -452,43 +478,21 @@ class GuitarTabsApp(QMainWindow):
 
     def remove_from_learned(self, table_view, index=None):
         """Remove tab(s) from the learned tabs table"""
-        # Get all selected rows
-        selection_model = table_view.selectionModel()
-        indices = selection_model.selectedRows()
+        # Handle single or multiple selection
+        if index and index.isValid():
+            indices = [index]
+        else:
+            indices = table_view.selectionModel().selectedRows()
         
         if not indices:
-            # If no selected rows and a specific index was provided
-            if index and index.isValid():
-                indices = [index]
-            else:
-                return
-        
-        # Confirm removal for multiple selections
-        if len(indices) > 1:
-            if QMessageBox.question(
-                    self,
-                    "Confirm Removal",
-                    f"Are you sure you want to remove {len(indices)} tabs from learned?",
-                    QMessageBox.Yes | QMessageBox.No
-            ) != QMessageBox.Yes:
-                return
-                
+            return
+            
         removed_count = 0
         proxy_model = table_view.model()
         source_model = proxy_model.sourceModel()
         
-        # Store tab title for single removal status message
-        tab_title = ""
-        last_processed_row = None
-        
         for idx in indices:
             source_row = proxy_model.mapToSource(idx).row()
-            last_processed_row = source_row
-            
-            # Safely store title for single selection
-            if len(indices) == 1:
-                tab_title = source_model._data[source_row][3]  # Title column
-                
             tab_id = source_model._data[source_row][0]
             
             try:
@@ -500,8 +504,9 @@ class GuitarTabsApp(QMainWindow):
         # Reload data
         self.load_data()
         
-        # Show success message - safely use tab_title only if we have it
-        if len(indices) == 1 and tab_title:
+        # Show success message
+        if len(indices) == 1:
+            tab_title = source_model._data[source_row][3]  # Title column
             self.statusBar().showMessage(f"'{tab_title}' removed from learned tabs")
         else:
             self.statusBar().showMessage(f"{removed_count} tabs removed from learned tabs")
@@ -544,12 +549,20 @@ class GuitarTabsApp(QMainWindow):
                     # Add to tabs widget
                     self.tabs_widget.addTab(all_tabs_table, "All Tabs")
                 
-                # Create a tab for each band
+                # Create "General" tab for bands with less than 5 songs
+                general_tabs = []
+                bands_with_few_songs = set()
+                
+                # Create a tab for each band with 5 or more songs, collect others for General tab
                 for band_id, band_name in bands:
                     # Get tabs for this band
                     band_tabs = self.db_manager.get_tabs_for_band(band_id)
 
-                    if band_tabs:
+                    if len(band_tabs) < 5:
+                        # Add to general tabs
+                        general_tabs.extend(band_tabs)
+                        bands_with_few_songs.add(band_name)
+                    elif band_tabs:
                         band_table = QTableView()
                         band_model = TabsDataModel(band_tabs, columns)
                         proxy_model = CustomProxyModel()
@@ -571,8 +584,37 @@ class GuitarTabsApp(QMainWindow):
 
                         # Add to tabs widget
                         self.tabs_widget.addTab(band_table, band_name)
+                
+                # Add the General tab if there are any bands with less than 5 songs
+                if general_tabs:
+                    general_table = QTableView()
+                    general_model = TabsDataModel(general_tabs, columns)
+                    proxy_model = CustomProxyModel()
+                    proxy_model.setSourceModel(general_model)
+                    proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
+                    general_table.setModel(proxy_model)
+
+                    # Configure table appearance
+                    general_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                    general_table.hideColumn(0)  # Hide ID column
+                    general_table.setSortingEnabled(True)
+                    general_table.setAlternatingRowColors(True)
+                    general_table.setSelectionBehavior(QTableView.SelectRows)
+                    general_table.setSelectionMode(QTableView.ExtendedSelection)
+                    
+                    # Enable context menu
+                    general_table.setContextMenuPolicy(Qt.CustomContextMenu)
+                    general_table.customContextMenuRequested.connect(self.show_context_menu)
+
+                    # Add to tabs widget - place it right after "All Tabs"
+                    self.tabs_widget.insertTab(1, general_table, "General")
+                    
+                    # Update status to show which bands are in General tab
+                    bands_list = ", ".join(sorted(bands_with_few_songs))
+                    general_table.setToolTip(f"Bands with fewer than 5 songs: {bands_list}")
             
             else:  # self.current_view == "learned"
+                # Implementation for learned tabs remains the same
                 # Columns for learned tabs view
                 columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Learned Date"]
                 
@@ -603,7 +645,11 @@ class GuitarTabsApp(QMainWindow):
                     # Add to tabs widget
                     self.tabs_widget.addTab(learned_table, "All Learned")
                     
-                    # Create tabs for bands with learned songs
+                    # Create General tab for learned songs from bands with fewer than 5 learned songs
+                    general_learned_tabs = []
+                    bands_with_few_learned = set()
+                    
+                    # Group learned tabs by band
                     band_learned_tabs = {}
                     for tab in learned_tabs:
                         band_name = tab[1]  # Band column
@@ -611,29 +657,62 @@ class GuitarTabsApp(QMainWindow):
                             band_learned_tabs[band_name] = []
                         band_learned_tabs[band_name].append(tab)
                     
-                    # Create a tab for each band with learned songs
+                    # Create tabs for bands with 5+ learned songs, collect others for General
                     for band_name, tabs in band_learned_tabs.items():
-                        band_table = QTableView()
-                        band_model = TabsDataModel(tabs, columns)
+                        if len(tabs) < 5:
+                            # Add to general learned tabs
+                            general_learned_tabs.extend(tabs)
+                            bands_with_few_learned.add(band_name)
+                        else:
+                            band_table = QTableView()
+                            band_model = TabsDataModel(tabs, columns)
+                            proxy_model = CustomProxyModel()
+                            proxy_model.setSourceModel(band_model)
+                            proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
+                            band_table.setModel(proxy_model)
+                            
+                            # Configure table appearance
+                            band_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                            band_table.hideColumn(0)  # Hide ID column
+                            band_table.setSortingEnabled(True)
+                            band_table.setAlternatingRowColors(True)
+                            band_table.setSelectionBehavior(QTableView.SelectRows)
+                            band_table.setSelectionMode(QTableView.ExtendedSelection)
+                            
+                            # Enable context menu
+                            band_table.setContextMenuPolicy(Qt.CustomContextMenu)
+                            band_table.customContextMenuRequested.connect(self.show_learned_context_menu)
+                            
+                            # Add to tabs widget
+                            self.tabs_widget.addTab(band_table, band_name)
+                    
+                    # Add General tab for learned if needed
+                    if general_learned_tabs:
+                        general_table = QTableView()
+                        general_model = TabsDataModel(general_learned_tabs, columns)
                         proxy_model = CustomProxyModel()
-                        proxy_model.setSourceModel(band_model)
+                        proxy_model.setSourceModel(general_model)
                         proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
-                        band_table.setModel(proxy_model)
+                        general_table.setModel(proxy_model)
                         
                         # Configure table appearance
-                        band_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-                        band_table.hideColumn(0)  # Hide ID column
-                        band_table.setSortingEnabled(True)
-                        band_table.setAlternatingRowColors(True)
-                        band_table.setSelectionBehavior(QTableView.SelectRows)
-                        band_table.setSelectionMode(QTableView.ExtendedSelection)
+                        general_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                        general_table.hideColumn(0)  # Hide ID column
+                        general_table.setSortingEnabled(True)
+                        general_table.setAlternatingRowColors(True)
+                        general_table.setSelectionBehavior(QTableView.SelectRows)
+                        general_table.setSelectionMode(QTableView.ExtendedSelection)
                         
                         # Enable context menu
-                        band_table.setContextMenuPolicy(Qt.CustomContextMenu)
-                        band_table.customContextMenuRequested.connect(self.show_learned_context_menu)
+                        general_table.setContextMenuPolicy(Qt.CustomContextMenu)
+                        general_table.customContextMenuRequested.connect(self.show_learned_context_menu)
                         
-                        # Add to tabs widget
-                        self.tabs_widget.addTab(band_table, band_name)
+                        # Add to tabs widget - place it right after "All Learned"
+                        self.tabs_widget.insertTab(1, general_table, "General")
+                        
+                        # Update tooltip to show which bands are in General tab
+                        bands_list = ", ".join(sorted(bands_with_few_learned))
+                        general_table.setToolTip(f"Bands with fewer than 5 learned songs: {bands_list}")
                 else:
                     # Create an empty tab if no learned tabs
                     empty_widget = QWidget()
@@ -795,56 +874,83 @@ class GuitarTabsApp(QMainWindow):
 
     def delete_selected_tabs(self):
         """Delete the selected tabs"""
-        # Get current tab widget
-        current_tab = self.tabs_widget.currentWidget()
-        if not isinstance(current_tab, QTableView):
-            return
+        try:
+            # Get current tab widget
+            current_tab = self.tabs_widget.currentWidget()
+            if not isinstance(current_tab, QTableView):
+                return
 
-        # Get selected rows
-        selection_model = current_tab.selectionModel()
-        if not selection_model.hasSelection():
-            QMessageBox.warning(self, "Warning", "No tabs selected.")
-            return
+            # Get selected rows
+            selection_model = current_tab.selectionModel()
+            if not selection_model.hasSelection():
+                QMessageBox.warning(self, "Warning", "No tabs selected.")
+                return
 
-        # Get all UNIQUE selected rows (avoid duplicates from multiple columns in same row)
-        selected_rows = set()
-        for index in selection_model.selectedIndexes():
-            selected_rows.add(index.row())
+            # Get all selected row indices
+            selected_rows = selection_model.selectedRows()
+            if not selected_rows:
+                QMessageBox.warning(self, "Warning", "No rows selected.")
+                return
 
-        # Confirm deletion
-        if QMessageBox.question(
-                self,
-                "Confirm Deletion",
-                f"Are you sure you want to delete {len(selected_rows)} selected tab(s)?",
-                QMessageBox.Yes | QMessageBox.No
-        ) == QMessageBox.Yes:
-            try:
+            # Confirm deletion
+            if QMessageBox.question(
+                    self,
+                    "Confirm Deletion",
+                    f"Are you sure you want to delete {len(selected_rows)} selected tab(s)?",
+                    QMessageBox.Yes | QMessageBox.No
+            ) == QMessageBox.Yes:
                 # Get proxy model and source model
                 proxy_model = current_tab.model()
                 source_model = proxy_model.sourceModel()
 
                 # Collect all tab IDs to delete (from last to first to avoid index shifting)
                 tab_ids = []
-                for proxy_row in sorted(list(selected_rows), reverse=True):
-                    # Map proxy index to source index
-                    source_row = proxy_model.mapToSource(proxy_model.index(proxy_row, 0)).row()
-                    # Get tab ID from first column
-                    tab_id = source_model._data[source_row][0]
-                    tab_ids.append(tab_id)
+                for proxy_index in sorted(selected_rows, key=lambda x: x.row(), reverse=True):
+                    proxy_row = proxy_index.row()
+                    source_index = proxy_model.mapToSource(proxy_index)
+                    
+                    if not source_index.isValid():
+                        continue
+                        
+                    source_row = source_index.row()
+                    # Make sure the row exists in source model data
+                    if 0 <= source_row < len(source_model._data):
+                        tab_id = source_model._data[source_row][0]  # Get ID from first column
+                        tab_ids.append(tab_id)
 
                 # Delete all tabs from database
+                deleted_count = 0
                 for tab_id in tab_ids:
-                    self.db_manager.delete_tab(tab_id)
+                    try:
+                        self.db_manager.delete_tab(tab_id)
+                        deleted_count += 1
+                    except Exception as e:
+                        print(f"Error deleting tab {tab_id}: {str(e)}")
+                    
+                # Clean up empty bands after deletion
+                empty_bands_removed = 0
+                try:
+                    empty_bands_removed = self.db_manager.clean_up_empty_bands() or 0
+                except Exception as e:
+                    print(f"Error cleaning up empty bands: {str(e)}")
 
                 # Reload data
                 self.load_data()
 
                 # Show success message
-                self.statusBar().showMessage(f"{len(tab_ids)} tabs deleted successfully")
+                if deleted_count > 0:
+                    delete_message = f"{deleted_count} tabs deleted successfully"
+                    if empty_bands_removed > 0:
+                        delete_message += f", {empty_bands_removed} empty band(s) removed"
+                    self.statusBar().showMessage(delete_message)
+                else:
+                    self.statusBar().showMessage("No tabs were deleted")
 
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to delete tabs: {str(e)}")
-
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to delete tabs: {str(e)}")
+            self.statusBar().showMessage("Error deleting tabs")
 
     # Event handlers for dragging the window
     def mousePressEvent(self, event):

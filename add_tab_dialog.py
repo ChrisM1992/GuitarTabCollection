@@ -12,7 +12,7 @@ class StarRating(QWidget):
     def __init__(self, parent=None, max_stars=5):
         super().__init__(parent)
         self.max_stars = max_stars
-        self.current_rating = 3  # Default to 3 stars
+        self.current_rating = 1  # Default to 1 stars
         self.star_size = 24
         self.setMouseTracking(True)
         self.setMinimumHeight(30)
@@ -215,10 +215,17 @@ class AddTabDialog(QDialog):
         new_tuning, ok = QInputDialog.getText(self, "Add New Tuning", "Enter tuning name:")
         if ok and new_tuning:
             if new_tuning not in self.tunings:
-                self.tuning.addItem(new_tuning)
-                self.tunings.append(new_tuning)
-                # Select the newly added tuning
-                self.tuning.setCurrentText(new_tuning)
+                # Add to database if parent has db_manager
+                try:
+                    if hasattr(self.parent(), 'db_manager'):
+                        self.parent().db_manager.add_tuning(new_tuning)
+                    # Update combobox
+                    self.tuning.addItem(new_tuning)
+                    self.tunings.append(new_tuning)
+                    # Select the newly added tuning
+                    self.tuning.setCurrentText(new_tuning)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to add tuning: {str(e)}")
                 
     def deleteTuning(self):
         """Delete the currently selected tuning"""
@@ -248,22 +255,6 @@ class AddTabDialog(QDialog):
         
         menu.addAction(delete_action)
         menu.exec_(self.tuning.mapToGlobal(position))
-
-    def addNewTuning(self):
-        """Add a new tuning to the dropdown"""
-        new_tuning, ok = QInputDialog.getText(self, "Add New Tuning", "Enter tuning name:")
-        if ok and new_tuning:
-            if new_tuning not in self.tunings:
-                # Add to database
-                try:
-                    self.parent().db_manager.add_tuning(new_tuning)
-                    # Update combobox
-                    self.tuning.addItem(new_tuning)
-                    self.tunings.append(new_tuning)
-                    # Select the newly added tuning
-                    self.tuning.setCurrentText(new_tuning)
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Failed to add tuning: {str(e)}")
 
     def getTabData(self):
         """Get the entered tab data"""

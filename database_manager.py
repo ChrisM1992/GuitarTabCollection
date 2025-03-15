@@ -240,6 +240,41 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    
+
+    def clean_up_empty_bands(self):
+        """Remove bands that don't have any tabs associated with them"""
+        conn = None
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # Find bands with no tabs
+            cursor.execute('''
+            SELECT b.id, b.name FROM bands b
+            LEFT JOIN tabs t ON b.id = t.band_id
+            WHERE t.id IS NULL
+            ''')
+            
+            empty_bands = cursor.fetchall()
+            
+            # Delete each empty band
+            for band_id, band_name in empty_bands:
+                cursor.execute("DELETE FROM bands WHERE id = ?", (band_id,))
+            
+            conn.commit()
+            
+            return len(empty_bands)  # Return number of bands deleted
+            
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            print(f"Error cleaning up empty bands: {str(e)}")
+            return 0  # Return 0 on error
+        finally:
+            if conn:
+                conn.close()
+
     def add_to_learned(self, tab_id):
         """Add a tab to the learned tabs table"""
         conn = sqlite3.connect(self.db_path)
@@ -310,54 +345,58 @@ class DatabaseManager:
         conn.close()
         return result
 
-    def import_from_excel(self, excel_path):
-        """Import data from Excel file"""
-        try:
-            # Read Excel file
-            excel_file = pd.ExcelFile(excel_path)
+# Update the import_from_excel method in DatabaseManager class
+def import_from_excel(self, excel_path):
+    """Import data from Excel file"""
+    try:
+        # Read Excel file
+        excel_file = pd.ExcelFile(excel_path)
 
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
 
-            # Process each sheet (band)
-            for sheet_name in excel_file.sheet_names:
-                # Read sheet
-                df = excel_file.parse(sheet_name)
+        # Process each sheet (band)
+        for sheet_name in excel_file.sheet_names:
+            # Read sheet
+            df = excel_file.parse(sheet_name)
 
-                # Create or get band
-                cursor.execute("SELECT id FROM bands WHERE name = ?", (sheet_name,))
-                result = cursor.fetchone()
+            # Create or get band
+            cursor.execute("SELECT id FROM bands WHERE name = ?", (sheet_name,))
+            result = cursor.fetchone()
 
-                if result:
-                    band_id = result[0]
-                else:
-                    cursor.execute("INSERT INTO bands (name) VALUES (?)", (sheet_name,))
-                    band_id = cursor.lastrowid
+            if result:
+                band_id = result[0]
+            else:
+                cursor.execute("INSERT INTO bands (name) VALUES (?)", (sheet_name,))
+                band_id = cursor.lastrowid
 
-                # Process each row
-                for _, row in df.iterrows():
-                    # Extract data from row
-                    try:
-                        album = row.get('Album', '')
-                        title = row.get('Title', '')
-                        tuning = row.get('Tuning', '')
-                        rating = row.get('Rating', 3)
-                        genre = row.get('Genre', '')
+            # Process each row
+            for _, row in df.iterrows():
+                # Extract data from row
+                try:
+                    album = row.get('Album', '')
+                    title = row.get('Title', '')
+                    tuning = row.get('Tuning', '')
+                    rating = row.get('Rating', 3)
+                    genre = row.get('Genre', '')
 
-                        # Insert tab
-                        cursor.execute('''
-                        INSERT INTO tabs (band_id, album, title, tuning, rating, genre)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        ''', (band_id, album, title, tuning, rating, genre))
-                    except Exception as e:
-                        print(f"Error importing row: {e}")
-                        continue
+                    # Insert tab
+                    cursor.execute('''
+                    INSERT INTO tabs (band_id, album, title, tuning, rating, genre)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (band_id, album, title, tuning, rating, genre))
+                except Exception as e:
+                    print(f"Error importing row: {e}")
+                    continue
 
-            conn.commit()
-            conn.close()
+        conn.commit()
+        conn.close()
+        
+        # Clean up any empty bands that might have been created
+        self.clean_up_empty_bands()
 
-            return True
+        return True
 
-        except Exception as e:
-            print(f"Error importing Excel file: {e}")
-            return False
+    except Exception as e:
+        print(f"Error importing Excel file: {e}")
+        return False
