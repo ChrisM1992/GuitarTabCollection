@@ -7,13 +7,16 @@ from PyQt5.QtWidgets import (QMainWindow, QTableView, QVBoxLayout,
                              QFormLayout, QDialogButtonBox, QMenu, QAction)
 from PyQt5.QtCore import Qt, QSortFilterProxyModel, QPoint, QRegExp, QItemSelectionModel
 from PyQt5.QtGui import QFont, QIcon
-
 from tabs_data_model import TabsDataModel
 from database_manager import DatabaseManager
 from add_tab_dialog import AddTabDialog
 from add_tab_multi import BatchAddDialog
 from PyQt5.QtWidgets import (QSizePolicy)
 from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QStyledItemDelegate, QStyleOptionButton
+from PyQt5.QtCore import QRect
+import webbrowser
+import urllib.parse
 
 
 
@@ -527,7 +530,7 @@ class GuitarTabsApp(QMainWindow):
             
             if self.current_view == "all":
                 # Standard columns for all tabs view
-                columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre"]
+                columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Search Tab"]
                 
                 # Create "All Tabs" tab
                 all_tabs = self.db_manager.get_all_tabs()
@@ -619,9 +622,9 @@ class GuitarTabsApp(QMainWindow):
                     general_table.setToolTip(f"Bands with fewer than 5 songs: {bands_list}")
             
             else:  # self.current_view == "learned"
-                # Implementation for learned tabs remains the same
+                # Implementation for learned tabs view
                 # Columns for learned tabs view
-                columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Learned Date"]
+                columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Learned Date", "Search Tab"]
                 
                 # Get learned tabs
                 learned_tabs = self.db_manager.get_all_learned_tabs()
@@ -733,6 +736,9 @@ class GuitarTabsApp(QMainWindow):
             else:
                 learned_count = len(self.db_manager.get_all_learned_tabs())
                 self.statusBar().showMessage(f"Loaded {learned_count} learned tabs")
+
+            # Setup the search tab buttons after all tables are created
+            self.setupSearchTabButtons()
 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load data: {str(e)}")
@@ -1248,3 +1254,103 @@ class GuitarTabsApp(QMainWindow):
         event.accept()
 
         
+    def setupSearchTabButtons(self):
+        """Setup the button delegate for the Search Tab column"""
+        # For each table view in the tabs widget
+        from PyQt5.QtWidgets import QStyledItemDelegate, QStyle
+        from PyQt5.QtCore import QEvent, Qt
+        from PyQt5.QtGui import QColor
+        
+        # Store a reference to the main window
+        main_window = self
+        
+        for i in range(self.tabs_widget.count()):
+            tab_widget = self.tabs_widget.widget(i)
+            if isinstance(tab_widget, QTableView):
+                proxy_model = tab_widget.model()
+                source_model = proxy_model.sourceModel()
+                
+                # Connect signal from model to handler
+                source_model.searchTabRequested.connect(self.searchTabOnline)
+                
+                # Add button delegate to the Search Tab column
+                class ButtonDelegate(QStyledItemDelegate):
+                    def __init__(self, parent=None):
+                        super().__init__(parent)
+                    
+                    def paint(self, painter, option, index):
+                        # Draw a button with "Open Online" text
+                        painter.save()
+                        
+                        # Set color and style similar to the Add Tabs button
+                        if option.state & QStyle.State_MouseOver:
+                            bg_color = QColor("#bf6741")  # Hover color
+                        else:
+                            bg_color = QColor("#ec7846")  # Normal color
+                        
+                        # Draw button background
+                        painter.setPen(Qt.NoPen)
+                        painter.setBrush(bg_color)
+                        painter.drawRoundedRect(option.rect.adjusted(2, 2, -2, -2), 4, 4)
+                        
+                        # Draw button text
+                        painter.setPen(QColor("white"))
+                        text_rect = option.rect.adjusted(4, 4, -4, -4)
+                        painter.drawText(text_rect, Qt.AlignCenter, "Open Online")
+                        
+                        painter.restore()
+                    
+                    def editorEvent(self, event, model, option, index):
+                        if event.type() == QEvent.MouseButtonRelease:
+                            # Get band and title data
+                            proxy_model = model
+                            source_model = proxy_model.sourceModel()
+                            source_index = proxy_model.mapToSource(index)
+                            source_row = source_index.row()
+                            
+                            band = source_model._data[source_row][1]  # Band column (index 1)
+                            title = source_model._data[source_row][3]  # Title column (index 3)
+                            
+                            # Use the main window reference to call searchTabOnline
+                            main_window.searchTabOnline(band, title)
+                            return True
+                        
+                        return super().editorEvent(event, model, option, index)
+                
+                # Try to get the Search Tab column index
+                try:
+                    search_col_idx = source_model.columns.index("Search Tab")
+                    
+                    # Set the delegate for the column
+                    tab_widget.setItemDelegateForColumn(
+                        search_col_idx, ButtonDelegate(tab_widget))
+                    
+                    # Make the column a reasonable width for the text
+                    tab_widget.setColumnWidth(search_col_idx, 100)
+                except ValueError:
+                    # If "Search Tab" is not in columns, quietly skip
+                    pass
+
+    # This code should replace the searchTabOnline method in the GuitarTabsApp class
+
+    def searchTabOnline(self, band, title):
+        """Search for a guitar tab online"""
+        try:
+            # Format the search query
+            query = f"{band} {title} guitar tab"
+            encoded_query = urllib.parse.quote(query)
+            
+            # Construct the Ultimate Guitar search URL
+            url = f"https://www.ultimate-guitar.com/search.php?search_type=title&value={encoded_query}"
+            
+            # Open in default browser
+            webbrowser.open(url)
+            
+            # Update status bar
+            self.statusBar().showMessage(f"Searching for '{band} - {title}' on Ultimate Guitar...")
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.statusBar().showMessage(f"Error searching for tab: {str(e)}")
+
+            
