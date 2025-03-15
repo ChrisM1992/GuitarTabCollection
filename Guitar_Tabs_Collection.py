@@ -98,7 +98,7 @@ class AddTabDialog(QDialog):
 
     def __init__(self, bands, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Add New Tab")
+        self.setWindowTitle("Add new Tab")
         self.resize(400, 300)
 
         layout = QFormLayout(self)
@@ -434,7 +434,7 @@ class GuitarTabsApp(QMainWindow):
         top_controls = QHBoxLayout()
 
         # Add new tab button
-        self.add_btn = QPushButton("Add New Tab")
+        self.add_btn = QPushButton("Add new Tab")
         self.add_btn.clicked.connect(self.show_add_dialog)
         top_controls.addWidget(self.add_btn)
 

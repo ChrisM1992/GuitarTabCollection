@@ -160,7 +160,7 @@ class GuitarTabsApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Guitar Tabs Collection Manager")
-        self.setMinimumSize(900, 600)
+        self.setMinimumSize(1400, 800)
 
         # Variables for window dragging
         self.draggable = True
@@ -196,9 +196,8 @@ class GuitarTabsApp(QMainWindow):
 
         # Top controls
         top_controls = QHBoxLayout()
-        top_controls.setAlignment(Qt.AlignLeft)  # Align buttons to the left
-
-        # Mode selection buttons
+        
+        # Mode selection buttons (keep on the left)
         self.mode_buttons_layout = QHBoxLayout()
         
         # Tabs Collection button
@@ -228,36 +227,42 @@ class GuitarTabsApp(QMainWindow):
             }
         """)
         
+        # Add the mode buttons to the left side
         top_controls.addLayout(self.mode_buttons_layout)
         
-        # Add some spacing
-        top_controls.addSpacing(20)
+        # Add a stretching space to push the next buttons to the right
+        top_controls.addStretch(1)
+        
+        # Action buttons (on the right)
+        action_buttons_layout = QHBoxLayout()
         
         # Add new tab button
         self.add_btn = QPushButton("Add New Tab")
         self.add_btn.clicked.connect(self.show_add_dialog)
-        top_controls.addWidget(self.add_btn)
+        action_buttons_layout.addWidget(self.add_btn)
 
-        # Add multiple button (ehem.batch_add_btn)
+        # Add multiple button
         self.batch_add_btn = QPushButton("Add multiple")
         self.batch_add_btn.clicked.connect(self.show_batch_add_dialog)
-        top_controls.addWidget(self.batch_add_btn)
+        action_buttons_layout.addWidget(self.batch_add_btn)
 
         # CSV Import button
         self.csv_import_btn = QPushButton("Import CSV")
         self.csv_import_btn.clicked.connect(self.import_from_csv)
-        top_controls.addWidget(self.csv_import_btn)
+        action_buttons_layout.addWidget(self.csv_import_btn)
 
         # Apply same size policy as other buttons
         self.csv_import_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.csv_import_btn.adjustSize()
+        
+        # Add the action buttons to the right side
+        top_controls.addLayout(action_buttons_layout)
 
-        # Delete tab button isnt neccassary anymore to do delete on richt click 
-        #self.delete_btn = QPushButton("Delete Selected Tab(s)")
-        #self.delete_btn.clicked.connect(self.delete_selected_tabs)
-        #top_controls.addWidget(self.delete_btn)
-
+        # Add the top controls to the main layout
         main_layout.addLayout(top_controls)
+        
+        # Add spacing between buttons and table (increase this value for bigger gap)
+        main_layout.addSpacing(20)
 
         # Tabs widget to show different bands
         self.tabs_widget = QTabWidget()
@@ -305,9 +310,6 @@ class GuitarTabsApp(QMainWindow):
 
         self.batch_add_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.batch_add_btn.adjustSize()
-
-        #self.delete_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        #self.delete_btn.adjustSize()
 
     def switch_mode(self, mode):
         """Switch between All Tabs and Learned Tabs views"""
