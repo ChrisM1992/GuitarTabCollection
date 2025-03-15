@@ -25,14 +25,14 @@ def main():
             alternate-background-color: #2a2a2d;  /* Explicitly set alternate row color */
         }
         QPushButton {
-            background-color: #ff5722;
+            background-color: #ec7846;
             color: white;
             border: none;
             padding: 8px 16px;
             border-radius: 4px;
         }
         QPushButton:hover {
-            background-color: #ff7043;
+            background-color: #bf6741;
         }
         
         /* Mode switch buttons */
