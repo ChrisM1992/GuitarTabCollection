@@ -371,7 +371,10 @@ class GuitarTabsApp(QMainWindow):
                 remove_action_text = f"Remove {selected_count} from Learned" if selected_count > 1 else "Remove from Learned"
                 remove_from_learned_action = menu.addAction(remove_action_text)
             
-            # Always add delete action
+            # Always add edit and delete actions
+            edit_action_text = f"Edit {selected_count} Tab(s)" if selected_count > 1 else "Edit Tab"
+            edit_action = menu.addAction(edit_action_text)
+            
             delete_action_text = f"Delete {selected_count} Tab(s)" if selected_count > 1 else "Delete Tab"
             delete_action = menu.addAction(delete_action_text)
             
@@ -381,11 +384,13 @@ class GuitarTabsApp(QMainWindow):
             # Process action
             if action is None:
                 return
-                
+                    
             if self.current_view == "all" and action == add_to_learned_action:
                 self.add_tab_to_learned(current_tab)
             elif self.current_view == "learned" and action == remove_from_learned_action:
                 self.remove_from_learned(current_tab)
+            elif action == edit_action:
+                self.edit_selected_tabs()
             elif action == delete_action:
                 self.delete_selected_tabs()
         
@@ -394,6 +399,86 @@ class GuitarTabsApp(QMainWindow):
             traceback.print_exc()
             print(f"Error in context menu: {str(e)}")
             self.statusBar().showMessage(f"Error in context menu: {str(e)}")
+
+    def edit_selected_tabs(self):
+        """Edit the selected tabs"""
+        try:
+            # Get current tab widget
+            current_tab = self.tabs_widget.currentWidget()
+            if not isinstance(current_tab, QTableView):
+                return
+
+            # Get selected rows
+            selection_model = current_tab.selectionModel()
+            selected_rows = selection_model.selectedRows()
+            
+            if not selected_rows:
+                QMessageBox.warning(self, "Warning", "No tabs selected.")
+                return
+
+            # Get proxy model and source model
+            proxy_model = current_tab.model()
+            source_model = proxy_model.sourceModel()
+
+            # Collect tabs to edit
+            tabs_to_edit = []
+            for proxy_index in selected_rows:
+                source_index = proxy_model.mapToSource(proxy_index)
+                source_row = source_index.row()
+                
+                # Get tab data from source model
+                tab_data = {
+                    'id': source_model._data[source_row][0],
+                    'band': source_model._data[source_row][1],
+                    'album': source_model._data[source_row][2],
+                    'title': source_model._data[source_row][3],
+                    'tuning': source_model._data[source_row][4],
+                    'rating': source_model._data[source_row][5],
+                    'genre': source_model._data[source_row][6]
+                }
+                tabs_to_edit.append(tab_data)
+
+            # If multiple tabs selected, show warning
+            if len(tabs_to_edit) > 1:
+                QMessageBox.warning(self, "Edit Tabs", "Please edit tabs one at a time.")
+                return
+
+            # Get list of band names (for dialog)
+            bands = [band[1] for band in self.db_manager.get_all_bands()]
+
+            # Create edit dialog
+            dialog = AddTabDialog(bands, self)
+            
+            # Populate dialog with existing tab data
+            tab = tabs_to_edit[0]
+            dialog.band_combo.setCurrentText(tab['band'])
+            dialog.album.setText(tab['album'])
+            dialog.title.setText(tab['title'])
+            dialog.rating_stars.setRating(tab['rating'])
+            dialog.tuning.setCurrentText(tab['tuning'])
+            dialog.genre.setText(tab['genre'])
+
+            if dialog.exec_() == QDialog.Accepted:
+                # Get updated data
+                updated_tab_data = dialog.getTabData()
+                if updated_tab_data:
+                    try:
+                        # Update tab in database
+                        self.db_manager.update_tab(tab['id'], updated_tab_data)
+
+                        # Reload data
+                        self.load_data()
+
+                        # Show success message
+                        self.statusBar().showMessage(f"Updated tab: {updated_tab_data['title']} by {updated_tab_data['band']}")
+
+                    except Exception as e:
+                        QMessageBox.critical(self, "Error", f"Failed to update tab: {str(e)}")
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to edit tabs: {str(e)}")
     
     def show_learned_context_menu(self, position):
         """Show context menu for learned tabs table"""
@@ -530,7 +615,7 @@ class GuitarTabsApp(QMainWindow):
             
             if self.current_view == "all":
                 # Standard columns for all tabs view
-                columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Search Tab"]
+                columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Ultimate Guitar"]
                 
                 # Create "All Tabs" tab
                 all_tabs = self.db_manager.get_all_tabs()
@@ -624,7 +709,7 @@ class GuitarTabsApp(QMainWindow):
             else:  # self.current_view == "learned"
                 # Implementation for learned tabs view
                 # Columns for learned tabs view
-                columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Learned Date", "Search Tab"]
+                columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Learned Date", "Ultimate Guitar"]
                 
                 # Get learned tabs
                 learned_tabs = self.db_manager.get_all_learned_tabs()
@@ -1319,7 +1404,7 @@ class GuitarTabsApp(QMainWindow):
                 
                 # Try to get the Search Tab column index
                 try:
-                    search_col_idx = source_model.columns.index("Search Tab")
+                    search_col_idx = source_model.columns.index("Ultimate Guitar")
                     
                     # Set the delegate for the column
                     tab_widget.setItemDelegateForColumn(
@@ -1328,7 +1413,7 @@ class GuitarTabsApp(QMainWindow):
                     # Make the column a reasonable width for the text
                     tab_widget.setColumnWidth(search_col_idx, 100)
                 except ValueError:
-                    # If "Search Tab" is not in columns, quietly skip
+                    # If "Ultimate Guitar" is not in columns, quietly skip
                     pass
 
     # This code should replace the searchTabOnline method in the GuitarTabsApp class

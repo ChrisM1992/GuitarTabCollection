@@ -14,9 +14,9 @@ class TabsDataModel(QAbstractTableModel):
         super().__init__()
         self._data = data if data is not None else []
         self.columns = columns if columns is not None else []
-        # Add "Search Tab" column if not already present
-        if "Search Tab" not in self.columns:
-            self.columns.append("Search Tab")
+        # Add "Ultimate Guitar" column if not already present
+        if "Ultimate Guitar" not in self.columns:
+            self.columns.append("Ultimate Guitar")
 
     def rowCount(self, parent=None):
         return len(self._data)
@@ -31,7 +31,7 @@ class TabsDataModel(QAbstractTableModel):
         # Display role - what is shown in the cell
         if role == Qt.DisplayRole:
             # For the Search Tab column, return empty string (button is rendered separately)
-            if self.columns[index.column()] == "Search Tab":
+            if self.columns[index.column()] == "Ultimate Guitar":
                 return ""
                 
             # Return the value from the data list
@@ -58,7 +58,7 @@ class TabsDataModel(QAbstractTableModel):
                 return Qt.AlignCenter
                 
             # Center align the Search Tab column
-            if self.columns[index.column()] == "Search Tab":
+            if self.columns[index.column()] == "Ultimate Guitar":
                 return Qt.AlignCenter
 
         # Foreground role - text color
@@ -75,8 +75,8 @@ class TabsDataModel(QAbstractTableModel):
         return None
 
     def flags(self, index):
-        # Make all cells except "Search Tab" editable
-        if self.columns[index.column()] == "Search Tab":
+        # Make all cells except "Ultimate Guitar" editable
+        if self.columns[index.column()] == "Ultimate Guitar":
             return super().flags(index) | Qt.ItemIsEnabled
         else:
             return super().flags(index) | Qt.ItemIsEditable
@@ -144,7 +144,7 @@ def setupSearchTabButtons(self):
                             QStyle.CE_PushButton, button_option, painter)
                     
             # Get the Search Tab column index
-            search_col_idx = source_model.columns.index("Search Tab")
+            search_col_idx = source_model.columns.index("Ultimate Guitar")
             
             # Set the delegate for the column
             tab_widget.setItemDelegateForColumn(
