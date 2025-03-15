@@ -156,7 +156,7 @@ def setupSearchTabButtons(self):
 def searchTabOnline(self, band, title):
     """Search for a guitar tab online"""
     try:
-        # Format the search query
+        # Construct the search query without "guitar tab"
         query = f"{band} {title}"
         encoded_query = urllib.parse.quote(query)
         

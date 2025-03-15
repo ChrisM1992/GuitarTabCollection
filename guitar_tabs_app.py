@@ -1337,7 +1337,7 @@ class GuitarTabsApp(QMainWindow):
         """Search for a guitar tab online"""
         try:
             # Format the search query
-            query = f"{band} {title} guitar tab"
+            query = f"{band} {title}"
             encoded_query = urllib.parse.quote(query)
             
             # Construct the Ultimate Guitar search URL
