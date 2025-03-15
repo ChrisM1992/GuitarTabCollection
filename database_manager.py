@@ -157,7 +157,21 @@ class DatabaseManager:
             conn.close()
 
     def add_tab(self, tab_data):
-        """Add a new tab to the database"""
+        """Add a new tab to the database with duplicate checking
+        
+        Args:
+            tab_data (dict): Data for the new tab
+            
+        Returns:
+            int: ID of the newly added tab
+            
+        Raises:
+            ValueError: If the tab is a duplicate
+        """
+        # Check for duplicate before attempting to add
+        if self.tab_exists(tab_data["band"], tab_data["album"], tab_data["title"]):
+            raise ValueError(f"A tab for '{tab_data['title']}' by '{tab_data['band']}' from album '{tab_data['album']}' already exists")
+        
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
@@ -345,58 +359,100 @@ class DatabaseManager:
         conn.close()
         return result
 
-# Update the import_from_excel method in DatabaseManager class
-def import_from_excel(self, excel_path):
-    """Import data from Excel file"""
-    try:
-        # Read Excel file
-        excel_file = pd.ExcelFile(excel_path)
+    # Update the import_from_excel method in DatabaseManager class
+    def import_from_excel(self, excel_path):
+        """Import data from Excel file"""
+        try:
+            # Read Excel file
+            excel_file = pd.ExcelFile(excel_path)
 
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+
+            # Process each sheet (band)
+            for sheet_name in excel_file.sheet_names:
+                # Read sheet
+                df = excel_file.parse(sheet_name)
+
+                # Create or get band
+                cursor.execute("SELECT id FROM bands WHERE name = ?", (sheet_name,))
+                result = cursor.fetchone()
+
+                if result:
+                    band_id = result[0]
+                else:
+                    cursor.execute("INSERT INTO bands (name) VALUES (?)", (sheet_name,))
+                    band_id = cursor.lastrowid
+
+                # Process each row
+                for _, row in df.iterrows():
+                    # Extract data from row
+                    try:
+                        album = row.get('Album', '')
+                        title = row.get('Title', '')
+                        tuning = row.get('Tuning', '')
+                        rating = row.get('Rating', 3)
+                        genre = row.get('Genre', '')
+
+                        # Insert tab
+                        cursor.execute('''
+                        INSERT INTO tabs (band_id, album, title, tuning, rating, genre)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ''', (band_id, album, title, tuning, rating, genre))
+                    except Exception as e:
+                        print(f"Error importing row: {e}")
+                        continue
+
+            conn.commit()
+            conn.close()
+            
+            # Clean up any empty bands that might have been created
+            self.clean_up_empty_bands()
+
+            return True
+
+        except Exception as e:
+            print(f"Error importing Excel file: {e}")
+            return False
+        
+        # Add this method to the database_manager.py file in the DatabaseManager class
+
+    def tab_exists(self, band_name, album, title):
+        """Check if a tab with the same band, album and title already exists
+        
+        Args:
+            band_name (str): Name of the band
+            album (str): Album name
+            title (str): Song title
+            
+        Returns:
+            bool: True if the tab already exists, False otherwise
+        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-
-        # Process each sheet (band)
-        for sheet_name in excel_file.sheet_names:
-            # Read sheet
-            df = excel_file.parse(sheet_name)
-
-            # Create or get band
-            cursor.execute("SELECT id FROM bands WHERE name = ?", (sheet_name,))
-            result = cursor.fetchone()
-
-            if result:
-                band_id = result[0]
-            else:
-                cursor.execute("INSERT INTO bands (name) VALUES (?)", (sheet_name,))
-                band_id = cursor.lastrowid
-
-            # Process each row
-            for _, row in df.iterrows():
-                # Extract data from row
-                try:
-                    album = row.get('Album', '')
-                    title = row.get('Title', '')
-                    tuning = row.get('Tuning', '')
-                    rating = row.get('Rating', 3)
-                    genre = row.get('Genre', '')
-
-                    # Insert tab
-                    cursor.execute('''
-                    INSERT INTO tabs (band_id, album, title, tuning, rating, genre)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (band_id, album, title, tuning, rating, genre))
-                except Exception as e:
-                    print(f"Error importing row: {e}")
-                    continue
-
-        conn.commit()
-        conn.close()
         
-        # Clean up any empty bands that might have been created
-        self.clean_up_empty_bands()
-
-        return True
-
-    except Exception as e:
-        print(f"Error importing Excel file: {e}")
-        return False
+        try:
+            # Get band_id for the given band_name
+            cursor.execute("SELECT id FROM bands WHERE name = ?", (band_name,))
+            band_result = cursor.fetchone()
+            
+            if not band_result:
+                # If band doesn't exist, then tab doesn't exist
+                return False
+                
+            band_id = band_result[0]
+            
+            # Check if a tab with the same band_id, album and title exists
+            cursor.execute("""
+            SELECT COUNT(*) FROM tabs 
+            WHERE band_id = ? AND album = ? AND title = ?
+            """, (band_id, album, title))
+            
+            count = cursor.fetchone()[0]
+            return count > 0
+            
+        except Exception as e:
+            print(f"Error checking for duplicate tab: {str(e)}")
+            return False
+        finally:
+            conn.close()

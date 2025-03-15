@@ -803,7 +803,7 @@ class GuitarTabsApp(QMainWindow):
         proxy_model.setFilterFixedString(filter_text)
 
     def show_add_dialog(self):
-        """Show dialog to add a new tab"""
+        """Show dialog to add a new tab with duplicate checking"""
         # Get list of band names
         bands = [band[1] for band in self.db_manager.get_all_bands()]
 
@@ -824,6 +824,15 @@ class GuitarTabsApp(QMainWindow):
             tab_data = dialog.getTabData()
             if tab_data:
                 try:
+                    # Check if the tab already exists
+                    if self.db_manager.tab_exists(tab_data["band"], tab_data["album"], tab_data["title"]):
+                        QMessageBox.warning(
+                            self, 
+                            "Duplicate Tab", 
+                            f"A tab for '{tab_data['title']}' by '{tab_data['band']}' from album '{tab_data['album']}' already exists."
+                        )
+                        return
+                    
                     # Add to database
                     self.db_manager.add_tab(tab_data)
 
@@ -833,11 +842,14 @@ class GuitarTabsApp(QMainWindow):
                     # Show success message
                     self.statusBar().showMessage(f"Added new tab: {tab_data['title']} by {tab_data['band']}")
 
+                except ValueError as ve:
+                    # This would be thrown by our duplicate check in add_tab
+                    QMessageBox.warning(self, "Duplicate Tab", str(ve))
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Failed to add tab: {str(e)}")
 
     def show_batch_add_dialog(self):
-        """Show dialog to add multiple tabs at once"""
+        """Show dialog to add multiple tabs at once with duplicate checking"""
         # Get list of band names from the database
         bands = [band[1] for band in self.db_manager.get_all_bands()]
 
@@ -858,16 +870,40 @@ class GuitarTabsApp(QMainWindow):
             try:
                 # Get the entered data
                 tabs_data = dialog.getTabsData()
+                
+                # Track statistics
+                success_count = 0
+                duplicate_count = 0
+                error_count = 0
 
                 # Add the tabs to the database
                 for tab in tabs_data:
-                    self.db_manager.add_tab(tab)
+                    try:
+                        # Check for duplicate
+                        if self.db_manager.tab_exists(tab["band"], tab["album"], tab["title"]):
+                            duplicate_count += 1
+                            continue
+                            
+                        self.db_manager.add_tab(tab)
+                        success_count += 1
+                    except ValueError as ve:
+                        # This would be our duplicate error
+                        duplicate_count += 1
+                    except Exception as e:
+                        error_count += 1
+                        print(f"Error adding tab {tab['title']}: {e}")
 
                 # Refresh the table view
                 self.load_data()
 
-                # Show success message
-                self.statusBar().showMessage(f"Successfully added {len(tabs_data)} tabs")
+                # Show detailed success message
+                message = f"Successfully added {success_count} tabs"
+                if duplicate_count > 0:
+                    message += f", {duplicate_count} duplicates skipped"
+                if error_count > 0:
+                    message += f", {error_count} errors"
+                    
+                self.statusBar().showMessage(message)
 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to add tabs: {str(e)}")
@@ -968,7 +1004,7 @@ class GuitarTabsApp(QMainWindow):
         event.accept()
 
     def import_from_csv(self):
-        """Import tabs from a CSV file"""
+        """Import tabs from a CSV file with duplicate checking"""
         # Open file dialog to select CSV file
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Import CSV", "", "CSV Files (*.csv);;All Files (*)"
@@ -996,9 +1032,10 @@ class GuitarTabsApp(QMainWindow):
                 reader = csv.DictReader(csv_file)
                 print(f"Column names detected: {reader.fieldnames}")
                 
-                # Count successful imports
+                # Count successful imports and track statistics
                 success_count = 0
                 error_count = 0
+                duplicate_count = 0
                 
                 # Process each row
                 for row in reader:
@@ -1027,11 +1064,22 @@ class GuitarTabsApp(QMainWindow):
                             except:
                                 rating = 1  # Default if conversion fails
                         
+                        band = row.get('band', '').strip()
+                        album = row.get('album', '').strip()
+                        title = row.get('title', '').strip()
+                        tuning = row.get('Tuning', row.get('tuning', '')).strip()  # Try both capitalizations
+                        
+                        # Check for duplicate before adding
+                        if self.db_manager.tab_exists(band, album, title):
+                            print(f"Duplicate found: {band} - {album} - {title}")
+                            duplicate_count += 1
+                            continue
+                        
                         tab_data = {
-                            "band": row.get('band', '').strip(),
-                            "album": row.get('album', '').strip(),
-                            "title": row.get('title', '').strip(),
-                            "tuning": row.get('Tuning', row.get('tuning', '')).strip(),  # Try both capitalizations
+                            "band": band,
+                            "album": album,
+                            "title": title,
+                            "tuning": tuning,
                             "rating": rating,
                             "genre": genre.strip()
                         }
@@ -1042,6 +1090,11 @@ class GuitarTabsApp(QMainWindow):
                         self.db_manager.add_tab(tab_data)
                         success_count += 1
                         
+                    except ValueError as ve:
+                        # This is for our duplicate check error
+                        print(f"Duplicate tab: {ve}")
+                        duplicate_count += 1
+                        continue
                     except Exception as e:
                         print(f"Error importing row: {e}")
                         error_count += 1
@@ -1049,6 +1102,8 @@ class GuitarTabsApp(QMainWindow):
                 
                 # Show detailed status message
                 status_msg = f"Imported {success_count} tabs"
+                if duplicate_count > 0:
+                    status_msg += f", {duplicate_count} duplicates skipped"
                 if error_count > 0:
                     status_msg += f", {error_count} errors"
                 
