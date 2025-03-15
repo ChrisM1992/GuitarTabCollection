@@ -187,6 +187,9 @@ class GuitarTabsApp(QMainWindow):
         # Load data
         self.load_data()
 
+        #Calls Custom Taskbar
+        self.setupCustomTitleBar()
+
 
     def initUI(self):
         # Main layout
@@ -1119,3 +1122,127 @@ class GuitarTabsApp(QMainWindow):
             import traceback
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Failed to import CSV file: {str(e)}")
+
+            # Add this to the GuitarTabsApp class in guitar_tabs_app.py
+
+    def setupCustomTitleBar(self):
+        # Remove the default title bar
+        self.setWindowFlags(Qt.FramelessWindowHint)
+        
+        # Create a custom title bar widget
+        title_bar = QWidget()
+        title_bar.setFixedHeight(40)  # Increased height for better button display
+        title_bar.setStyleSheet("background-color: #3a3a3a;")  # Dark gray color
+        
+        # Create title bar layout
+        title_layout = QHBoxLayout(title_bar)
+        title_layout.setContentsMargins(10, 0, 10, 0)
+        title_layout.setSpacing(5)  # Add spacing between buttons
+        
+        # Add title text
+        title_label = QLabel("Guitar Tabs Collection Manager")
+        title_label.setStyleSheet("color: white; font-weight: bold;")
+        title_layout.addWidget(title_label)
+        
+        # Add spacer to push buttons to the right
+        title_layout.addStretch()
+        
+        # Add window control buttons (minimize, maximize, close)
+        min_button = QPushButton("_")
+        min_button.setFixedSize(30, 30)  # Increased size
+        min_button.clicked.connect(self.showMinimized)
+        
+        max_button = QPushButton("□")
+        max_button.setFixedSize(30, 30)  # Increased size
+        max_button.clicked.connect(self.toggleMaximized)
+        
+        close_button = QPushButton("×")
+        close_button.setFixedSize(30, 30)  # Increased size
+        close_button.clicked.connect(self.close)
+        
+        # Style the buttons
+        button_style = """
+            QPushButton {
+                background-color: transparent;
+                color: white;
+                border: none;
+                font-size: 16px;  /* Increased font size */
+                text-align: center;
+                padding: 0px;
+                margin: 0px;
+                font-family: Arial;
+            }
+            QPushButton:hover {
+                background-color: #555555;
+            }
+        """
+        min_button.setStyleSheet(button_style)
+        max_button.setStyleSheet(button_style)
+        
+        # Make close button red on hover
+        close_button.setStyleSheet(button_style + """
+            QPushButton:hover {
+                background-color: #E81123;
+            }
+        """)
+        
+        # Alternative unicode symbols if needed
+        # min_button.setText("\u2212")  # Unicode minus sign
+        # max_button.setText("\u25A1")  # Unicode white square
+        # close_button.setText("\u2715")  # Unicode multiplication X
+        
+        title_layout.addWidget(min_button)
+        title_layout.addWidget(max_button)
+        title_layout.addWidget(close_button)
+        
+        # Add the title bar to the top of the main layout
+        main_layout = self.centralWidget().layout()
+        main_layout.insertWidget(0, title_bar)
+        
+        # Make the title bar draggable to move the window
+        title_bar.mousePressEvent = self.titleBarMousePressEvent
+        title_bar.mouseMoveEvent = self.titleBarMouseMoveEvent
+        title_bar.mouseReleaseEvent = self.titleBarMouseReleaseEvent
+        
+        # Initialize drag position
+        self.drag_position = None
+
+    def toggleMaximized(self):
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def titleBarMousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def titleBarMouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton and self.drag_position is not None:
+            self.move(event.globalPos() - self.drag_position)
+            event.accept()
+
+    def titleBarMouseReleaseEvent(self, event):
+        self.drag_position = None
+        event.accept()
+
+    def toggleMaximized(self):
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def titleBarMousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def titleBarMouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton and self.drag_position is not None:
+            self.move(event.globalPos() - self.drag_position)
+            event.accept()
+
+    def titleBarMouseReleaseEvent(self, event):
+        self.drag_position = None
+        event.accept()
