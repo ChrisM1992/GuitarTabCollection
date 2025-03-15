@@ -1246,3 +1246,5 @@ class GuitarTabsApp(QMainWindow):
     def titleBarMouseReleaseEvent(self, event):
         self.drag_position = None
         event.accept()
+
+        
