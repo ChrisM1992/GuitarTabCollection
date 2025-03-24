@@ -137,9 +137,18 @@ class AddTabDialog(QDialog):
         self.setWindowTitle("Add New Tab")
         self.resize(400, 300)
         
-        # List of common guitar tunings
-        self.tunings = ["E A D G B E", "D A D G B E", "C G C F A D", "D G D G B D", "E B E G# B E", "D A D F# A D"]
-        self.default_tunings = list(self.tunings)  # Store defaults to prevent deletion
+        # Get tunings from database if available
+        self.tunings = []
+        self.default_tunings = []
+        
+        if hasattr(parent, 'db_manager'):
+            self.tunings = parent.db_manager.get_all_tunings()
+            # Keep the first few default tunings for reference
+            self.default_tunings = self.tunings[:6] if len(self.tunings) >= 6 else self.tunings.copy()
+        else:
+            # Fallback to hardcoded tunings if db_manager is not available
+            self.tunings = ["E A D G B E", "D G C F A D", "C G C F A D"]
+            self.default_tunings = list(self.tunings)
 
         layout = QFormLayout(self)
 
@@ -209,52 +218,6 @@ class AddTabDialog(QDialog):
         show_new_band = (text == "-- New Band --")
         self.new_band_label.setVisible(show_new_band)
         self.new_band.setVisible(show_new_band)
-        
-    def addNewTuning(self):
-        """Add a new tuning to the dropdown"""
-        new_tuning, ok = QInputDialog.getText(self, "Add New Tuning", "Enter tuning name:")
-        if ok and new_tuning:
-            if new_tuning not in self.tunings:
-                # Add to database if parent has db_manager
-                try:
-                    if hasattr(self.parent(), 'db_manager'):
-                        self.parent().db_manager.add_tuning(new_tuning)
-                    # Update combobox
-                    self.tuning.addItem(new_tuning)
-                    self.tunings.append(new_tuning)
-                    # Select the newly added tuning
-                    self.tuning.setCurrentText(new_tuning)
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Failed to add tuning: {str(e)}")
-                
-    def deleteTuning(self):
-        """Delete the currently selected tuning"""
-        current_tuning = self.tuning.currentText()
-        
-        # Prevent deletion of default tunings
-        if current_tuning in self.default_tunings:
-            QMessageBox.information(self, "Cannot Delete", 
-                                    "Default tunings cannot be deleted.")
-            return
-            
-        # Remove from the combo box and the list
-        index = self.tuning.currentIndex()
-        if index >= 0:
-            self.tuning.removeItem(index)
-            if current_tuning in self.tunings:
-                self.tunings.remove(current_tuning)
-                
-    def showTuningContextMenu(self, position):
-        """Show context menu for right-click on tuning combo box"""
-        menu = QMenu()
-        current_tuning = self.tuning.currentText()
-        
-        delete_action = QAction("Delete Tuning", self)
-        delete_action.triggered.connect(self.deleteTuning)
-        delete_action.setEnabled(current_tuning not in self.default_tunings)
-        
-        menu.addAction(delete_action)
-        menu.exec_(self.tuning.mapToGlobal(position))
 
     def getTabData(self):
         """Get the entered tab data"""
@@ -264,14 +227,97 @@ class AddTabDialog(QDialog):
         if band == "-- New Band --":
             band = self.new_band.text().strip()
             if not band:
+                QMessageBox.warning(self, "Warning", "Please enter a band name")
                 return None  # No band name entered
+
+        # Check for required fields
+        title = self.title.text().strip()
+        if not title:
+            QMessageBox.warning(self, "Warning", "Please enter a title")
+            return None
 
         # Return the tab data
         return {
             "band": band,
             "album": self.album.text().strip(),
-            "title": self.title.text().strip(),
+            "title": title,
             "tuning": self.tuning.currentText().strip(),
             "rating": self.rating_stars.getRating(),
             "genre": self.genre.text().strip()
         }
+
+    def showTuningContextMenu(self, position):
+        """Show context menu for right-click on tuning combo box"""
+        menu = QMenu()
+        current_tuning = self.tuning.currentText()
+        
+        add_action = QAction("Add New Tuning", self)
+        add_action.triggered.connect(self.addNewTuning)
+        
+        delete_action = QAction("Delete Tuning", self)
+        delete_action.triggered.connect(self.deleteTuning)
+        
+        menu.addAction(add_action)
+        menu.addAction(delete_action)
+        menu.exec_(self.tuning.mapToGlobal(position))
+        
+    def addNewTuning(self):
+        """Add a new tuning to the dropdown and database"""
+        new_tuning, ok = QInputDialog.getText(self, "Add New Tuning", "Enter tuning name:")
+        if ok and new_tuning:
+            if new_tuning not in self.tunings:
+                # Add to database if parent has db_manager
+                try:
+                    if hasattr(self.parent(), 'db_manager'):
+                        self.parent().db_manager.add_tuning(new_tuning)
+                        # Update combobox
+                        self.tuning.addItem(new_tuning)
+                        self.tunings.append(new_tuning)
+                        # Select the newly added tuning
+                        self.tuning.setCurrentText(new_tuning)
+                    else:
+                        # Just add to combobox if no db_manager
+                        self.tuning.addItem(new_tuning)
+                        self.tunings.append(new_tuning)
+                        self.tuning.setCurrentText(new_tuning)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to add tuning: {str(e)}")
+            else:
+                QMessageBox.information(self, "Duplicate", "This tuning already exists in the database.")
+                
+    def deleteTuning(self):
+        """Delete the currently selected tuning from dropdown and database"""
+        current_tuning = self.tuning.currentText()
+        
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self, 
+            "Confirm Deletion",
+            f"Are you sure you want to delete the tuning '{current_tuning}'?\n\nNote: Tunings used by existing tabs cannot be deleted.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        deleted = False
+        # Delete from database if parent has db_manager
+        if hasattr(self.parent(), 'db_manager'):
+            deleted = self.parent().db_manager.delete_tuning(current_tuning)
+            
+            if not deleted:
+                QMessageBox.warning(self, "Cannot Delete", 
+                                    "This tuning cannot be deleted because it is being used by existing tabs.")
+                return
+        else:
+            # Always allow deletion if no db_manager
+            deleted = True
+        
+        # If deleted from database (or no db to delete from), remove from the combo box
+        if deleted:
+            index = self.tuning.currentIndex()
+            if index >= 0:
+                self.tuning.removeItem(index)
+                if current_tuning in self.tunings:
+                    self.tunings.remove(current_tuning)

@@ -14,8 +14,13 @@ class BatchAddDialog(QDialog):
         # Store bands list
         self.bands = bands
 
-        # Common tunings
-        self.tunings = ["E A D G B E", "D G C F A D", "C G C F A D", "D A D G B E", "A# F A# D# G C"]
+        # Get tunings from database if available
+        self.tunings = []
+        if hasattr(parent, 'db_manager'):
+            self.tunings = parent.db_manager.get_all_tunings()
+        else:
+            # Fallback to hardcoded tunings
+            self.tunings = ["E A D G B E", "D G C F A D", "C G C F A D", "D A D G B E", "A# F A# D# G C"]
 
         # Create layout
         layout = QFormLayout(self)
@@ -42,19 +47,33 @@ class BatchAddDialog(QDialog):
         self.songs_text.setPlaceholderText("Enter one song title per line")
         layout.addRow(songs_label, self.songs_text)
 
-        # Tuning with dropdown and add option
+        # Tuning with dropdown and add/delete options
         tuning_layout = QHBoxLayout()
         self.tuning = QComboBox()
         self.tuning.addItems(self.tunings)
         self.tuning.setEditable(True)
+        self.tuning.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tuning.customContextMenuRequested.connect(self.showTuningContextMenu)
         tuning_layout.addWidget(self.tuning)
 
+        # Add/Remove tuning buttons
+        tuning_buttons = QHBoxLayout()
+        
         # Add tuning button
         add_tuning_btn = QPushButton("+")
         add_tuning_btn.setFixedSize(25, 25)
         add_tuning_btn.setToolTip("Add new tuning")
         add_tuning_btn.clicked.connect(self.addNewTuning)
-        tuning_layout.addWidget(add_tuning_btn)
+        tuning_buttons.addWidget(add_tuning_btn)
+        
+        # Delete tuning button
+        remove_tuning_btn = QPushButton("×")
+        remove_tuning_btn.setFixedSize(25, 25)
+        remove_tuning_btn.setToolTip("Delete selected tuning")
+        remove_tuning_btn.clicked.connect(self.deleteTuning)
+        tuning_buttons.addWidget(remove_tuning_btn)
+        
+        tuning_layout.addLayout(tuning_buttons)
 
         layout.addRow("Tuning:", tuning_layout)
 
@@ -74,6 +93,21 @@ class BatchAddDialog(QDialog):
         # Initial state
         self.onBandChanged(self.band_combo.currentText())
 
+    def showTuningContextMenu(self, position):
+        """Show context menu for right-click on tuning combo box"""
+        menu = QMenu()
+        current_tuning = self.tuning.currentText()
+        
+        add_action = QAction("Add New Tuning", self)
+        add_action.triggered.connect(self.addNewTuning)
+        
+        delete_action = QAction("Delete Tuning", self)
+        delete_action.triggered.connect(self.deleteTuning)
+        
+        menu.addAction(add_action)
+        menu.addAction(delete_action)
+        menu.exec_(self.tuning.mapToGlobal(position))
+
     def onBandChanged(self, text):
         """Show/hide new band name field"""
         show_new_band = (text == "-- New Band --")
@@ -85,16 +119,61 @@ class BatchAddDialog(QDialog):
         new_tuning, ok = QInputDialog.getText(self, "Add New Tuning", "Enter tuning name:")
         if ok and new_tuning:
             if new_tuning not in self.tunings:
-                # Add to database
+                # Add to database if parent has db_manager
                 try:
-                    self.parent().db_manager.add_tuning(new_tuning)
-                    # Update combobox
-                    self.tuning.addItem(new_tuning)
-                    self.tunings.append(new_tuning)
-                    # Select the newly added tuning
-                    self.tuning.setCurrentText(new_tuning)
+                    if hasattr(self.parent(), 'db_manager'):
+                        self.parent().db_manager.add_tuning(new_tuning)
+                        # Update combobox
+                        self.tuning.addItem(new_tuning)
+                        self.tunings.append(new_tuning)
+                        # Select the newly added tuning
+                        self.tuning.setCurrentText(new_tuning)
+                    else:
+                        # Just add to combobox if no db_manager
+                        self.tuning.addItem(new_tuning)
+                        self.tunings.append(new_tuning)
+                        self.tuning.setCurrentText(new_tuning)
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Failed to add tuning: {str(e)}")
+            else:
+                QMessageBox.information(self, "Duplicate", "This tuning already exists in the database.")
+
+    def deleteTuning(self):
+        """Delete the currently selected tuning from dropdown and database"""
+        current_tuning = self.tuning.currentText()
+        
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self, 
+            "Confirm Deletion",
+            f"Are you sure you want to delete the tuning '{current_tuning}'?\n\nNote: Tunings used by existing tabs cannot be deleted.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply != QMessageBox.Yes:
+            return
+        
+        deleted = False
+        # Delete from database if parent has db_manager
+        if hasattr(self.parent(), 'db_manager'):
+            deleted = self.parent().db_manager.delete_tuning(current_tuning)
+            
+            if not deleted:
+                QMessageBox.warning(self, "Cannot Delete", 
+                                    "This tuning cannot be deleted because it is being used by existing tabs.")
+                return
+        else:
+            # Always allow deletion if no db_manager
+            deleted = True
+        
+        # If deleted from database (or no db to delete from), remove from the combo box
+        if deleted:
+            index = self.tuning.currentIndex()
+            if index >= 0:
+                self.tuning.removeItem(index)
+                if current_tuning in self.tunings:
+                    self.tunings.remove(current_tuning)
 
     def getTabsData(self):
         """Get the data for all tabs to be added"""

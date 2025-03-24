@@ -57,7 +57,7 @@ class DatabaseManager:
         ''')
 
         # Insert default tunings if they don't exist
-        default_tunings = ["E A D G B E", "D A D G B E", "C G C F A D", "D G D G B D", "E B E G# B E", "D A D F# A D"]
+        default_tunings = ["E A D G B E", "C G C F A D", "D G C F A D"]
         for tuning in default_tunings:
             cursor.execute("INSERT OR IGNORE INTO tunings (name) VALUES (?)", (tuning,))
 
@@ -155,6 +155,43 @@ class DatabaseManager:
             raise e
         finally:
             conn.close()
+
+    def delete_tuning(self, tuning_name):
+        """Delete a tuning from the database
+        
+        Args:
+            tuning_name (str): Name of the tuning to delete
+            
+        Returns:
+            bool: True if tuning was deleted, False if it was not found or could not be deleted
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            # Check if any tabs are using this tuning
+            cursor.execute("SELECT COUNT(*) FROM tabs WHERE tuning = ?", (tuning_name,))
+            tab_count = cursor.fetchone()[0]
+            
+            if tab_count > 0:
+                # There are tabs using this tuning, we should not delete it
+                conn.close()
+                return False
+                
+            # Delete the tuning
+            cursor.execute("DELETE FROM tunings WHERE name = ?", (tuning_name,))
+            conn.commit()
+            
+            # Check if any rows were affected
+            deleted = cursor.rowcount > 0
+            conn.close()
+            return deleted
+            
+        except Exception as e:
+            conn.rollback()
+            conn.close()
+            print(f"Error deleting tuning: {str(e)}")
+            return False
 
     def add_tab(self, tab_data):
         """Add a new tab to the database with duplicate checking
