@@ -222,14 +222,18 @@ class GuitarTabsApp(QMainWindow):
         # Style the mode buttons
         self.all_tabs_btn.setStyleSheet("""
             QPushButton:checked {
-                background-color: #c19757;          
+                background-color: #e3ac63;          
                 border: none;
+                color: black;
+                font-weight: bold;
             }
         """)
         self.learned_tabs_btn.setStyleSheet("""
             QPushButton:checked {
-                background-color: #c19757;
+                background-color: #e3ac63;
                 border: none;
+                color: black;
+                font-weight: bold;                         
             }
         """)
         
@@ -1369,9 +1373,9 @@ class GuitarTabsApp(QMainWindow):
                         
                         # Set color and style similar to the Add Tabs button
                         if option.state & QStyle.State_MouseOver:
-                            bg_color = QColor("#bf6741")  # Hover color
+                            bg_color = QColor("#eaa13f")  # Hover color
                         else:
-                            bg_color = QColor("#ec7846")  # Normal color
+                            bg_color = QColor("#e3ac63")  # Normal color
                         
                         # Draw button background
                         painter.setPen(Qt.NoPen)
@@ -1379,9 +1383,10 @@ class GuitarTabsApp(QMainWindow):
                         painter.drawRoundedRect(option.rect.adjusted(2, 2, -2, -2), 4, 4)
                         
                         # Draw button text
-                        painter.setPen(QColor("white"))
+                        painter.setPen(QColor("#000000"))
                         text_rect = option.rect.adjusted(4, 4, -4, -4)
-                        painter.drawText(text_rect, Qt.AlignCenter, "Open Online")
+                        painter.drawText(text_rect, Qt.AlignCenter, "Open")
+                        
                         
                         painter.restore()
                     
