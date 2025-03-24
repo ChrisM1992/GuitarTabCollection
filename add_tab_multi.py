@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
-                             QLabel, QComboBox, QLineEdit, QTextEdit, QFormLayout,
+                             QLabel, QComboBox, QLineEdit, QCheckBox, QTextEdit, QFormLayout,
                              QDialogButtonBox, QInputDialog, QMessageBox)
 from PyQt5.QtCore import Qt
 
@@ -15,13 +15,12 @@ class BatchAddDialog(QDialog):
         self.bands = bands
 
         # Get tunings from database if available
-        self.tunings = []
+        self.standard_tunings = []
+        self.seven_string_tunings = []
         if hasattr(parent, 'db_manager'):
-            self.tunings = parent.db_manager.get_all_tunings()
-        else:
-            # Fallback to hardcoded tunings
-            self.tunings = ["E A D G B E", "D G C F A D", "C G C F A D", "D A D G B E", "A# F A# D# G C"]
-
+            self.standard_tunings = parent.db_manager.get_all_tunings(seven_string=False)
+            self.seven_string_tunings = parent.db_manager.get_all_tunings(seven_string=True)
+        
         # Create layout
         layout = QFormLayout(self)
 
@@ -47,13 +46,18 @@ class BatchAddDialog(QDialog):
         self.songs_text.setPlaceholderText("Enter one song title per line")
         layout.addRow(songs_label, self.songs_text)
 
+        # 7-string tunings checkbox
+        self.seven_string_check = QCheckBox("7-string")
+        self.seven_string_check.stateChanged.connect(self.update_tunings)
+
         # Tuning with dropdown and add/delete options
         tuning_layout = QHBoxLayout()
         self.tuning = QComboBox()
-        self.tuning.addItems(self.tunings)
+        self.tuning.addItems(self.standard_tunings)
         self.tuning.setEditable(True)
         self.tuning.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tuning.customContextMenuRequested.connect(self.showTuningContextMenu)
+        tuning_layout.addWidget(self.seven_string_check)
         tuning_layout.addWidget(self.tuning)
 
         # Add/Remove tuning buttons
@@ -93,6 +97,23 @@ class BatchAddDialog(QDialog):
         # Initial state
         self.onBandChanged(self.band_combo.currentText())
 
+    def update_tunings(self, state=None):
+        """Update tuning dropdown based on 7-string checkbox"""
+        # Store current text to try to preserve it if possible
+        current_text = self.tuning.currentText()
+        
+        # Clear and repopulate tuning dropdown
+        self.tuning.clear()
+        tunings = (self.seven_string_tunings if self.seven_string_check.isChecked() 
+                   else self.standard_tunings)
+        
+        # Add tunings to dropdown
+        self.tuning.addItems(tunings)
+        
+        # Try to restore previous text if it exists in the new list
+        if current_text in tunings:
+            self.tuning.setCurrentText(current_text)
+
     def showTuningContextMenu(self, position):
         """Show context menu for right-click on tuning combo box"""
         menu = QMenu()
@@ -116,22 +137,41 @@ class BatchAddDialog(QDialog):
 
     def addNewTuning(self):
         """Add a new tuning to the dropdown"""
-        new_tuning, ok = QInputDialog.getText(self, "Add New Tuning", "Enter tuning name:")
+        is_seven_string = self.seven_string_check.isChecked()
+        new_tuning, ok = QInputDialog.getText(
+            self, 
+            f"Add New {'7-String' if is_seven_string else 'Standard'} Tuning", 
+            "Enter tuning name:"
+        )
+        
         if ok and new_tuning:
-            if new_tuning not in self.tunings:
+            # Check against current tuning list
+            current_tunings = (self.seven_string_tunings if is_seven_string 
+                               else self.standard_tunings)
+            
+            if new_tuning not in current_tunings:
                 # Add to database if parent has db_manager
                 try:
                     if hasattr(self.parent(), 'db_manager'):
-                        self.parent().db_manager.add_tuning(new_tuning)
-                        # Update combobox
-                        self.tuning.addItem(new_tuning)
-                        self.tunings.append(new_tuning)
-                        # Select the newly added tuning
+                        self.parent().db_manager.add_tuning(new_tuning, is_seven_string)
+                        
+                        # Update local tuning lists
+                        if is_seven_string:
+                            self.seven_string_tunings.append(new_tuning)
+                        else:
+                            self.standard_tunings.append(new_tuning)
+                        
+                        # Update dropdown
+                        self.update_tunings()
                         self.tuning.setCurrentText(new_tuning)
                     else:
-                        # Just add to combobox if no db_manager
-                        self.tuning.addItem(new_tuning)
-                        self.tunings.append(new_tuning)
+                        # Just add to current list if no db_manager
+                        if is_seven_string:
+                            self.seven_string_tunings.append(new_tuning)
+                        else:
+                            self.standard_tunings.append(new_tuning)
+                        
+                        self.update_tunings()
                         self.tuning.setCurrentText(new_tuning)
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Failed to add tuning: {str(e)}")
@@ -141,6 +181,7 @@ class BatchAddDialog(QDialog):
     def deleteTuning(self):
         """Delete the currently selected tuning from dropdown and database"""
         current_tuning = self.tuning.currentText()
+        is_seven_string = self.seven_string_check.isChecked()
         
         # Confirm deletion
         reply = QMessageBox.question(
@@ -163,17 +204,15 @@ class BatchAddDialog(QDialog):
                 QMessageBox.warning(self, "Cannot Delete", 
                                     "This tuning cannot be deleted because it is being used by existing tabs.")
                 return
-        else:
-            # Always allow deletion if no db_manager
-            deleted = True
-        
-        # If deleted from database (or no db to delete from), remove from the combo box
-        if deleted:
-            index = self.tuning.currentIndex()
-            if index >= 0:
-                self.tuning.removeItem(index)
-                if current_tuning in self.tunings:
-                    self.tunings.remove(current_tuning)
+            else:
+                # Remove the tuning from the respective list
+                if is_seven_string:
+                    self.seven_string_tunings.remove(current_tuning)
+                else:
+                    self.standard_tunings.remove(current_tuning)
+                
+                # Refresh the tuning dropdown
+                self.update_tunings()
 
     def getTabsData(self):
         """Get the data for all tabs to be added"""
@@ -200,10 +239,14 @@ class BatchAddDialog(QDialog):
         # Split text into lines and remove empty lines
         song_titles = [line.strip() for line in song_text.split('\n') if line.strip()]
 
-        # Create tab data for each song
+        # Get tuning and 7-string status
         tuning = self.tuning.currentText()
+        is_seven_string = self.seven_string_check.isChecked()
+
+        # Get genre
         genre = self.genre.text().strip()
 
+        # Create tab data for each song
         tabs_data = []
         for title in song_titles:
             tabs_data.append({
@@ -211,6 +254,7 @@ class BatchAddDialog(QDialog):
                 'album': album,
                 'title': title,
                 'tuning': tuning,
+                'is_seven_string': is_seven_string,
                 'rating': self.rating,
                 'genre': genre
             })

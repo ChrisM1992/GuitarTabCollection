@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (QDialog, QFormLayout, QComboBox, QLineEdit,
                              QLabel, QSpinBox, QDialogButtonBox, QPushButton,
-                             QHBoxLayout, QVBoxLayout, QInputDialog, QMenu, QAction,
+                             QHBoxLayout, QVBoxLayout, QCheckBox, QInputDialog, QMenu, QAction,
                              QMessageBox, QWidget)
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QIcon, QColor
@@ -138,18 +138,13 @@ class AddTabDialog(QDialog):
         self.resize(400, 300)
         
         # Get tunings from database if available
-        self.tunings = []
-        self.default_tunings = []
+        self.standard_tunings = []
+        self.seven_string_tunings = []
         
         if hasattr(parent, 'db_manager'):
-            self.tunings = parent.db_manager.get_all_tunings()
-            # Keep the first few default tunings for reference
-            self.default_tunings = self.tunings[:6] if len(self.tunings) >= 6 else self.tunings.copy()
-        else:
-            # Fallback to hardcoded tunings if db_manager is not available
-            self.tunings = ["E A D G B E", "D G C F A D", "C G C F A D"]
-            self.default_tunings = list(self.tunings)
-
+            self.standard_tunings = parent.db_manager.get_all_tunings(seven_string=False)
+            self.seven_string_tunings = parent.db_manager.get_all_tunings(seven_string=True)
+        
         layout = QFormLayout(self)
 
         # Band selection (existing bands or new one)
@@ -168,14 +163,30 @@ class AddTabDialog(QDialog):
         self.album = QLineEdit()
         self.title = QLineEdit()
         
-        # Tuning with dropdown and buttons
+        # Tuning section with 7-string checkbox
         tuning_layout = QHBoxLayout()
+        
+        # 7-string tunings checkbox Set Color Checkbox Font
+        self.seven_string_check = QCheckBox("7-string") 
+        self.seven_string_check.setStyleSheet("""
+        QCheckBox { 
+            color: #ff6b6b;  /* Red/Coral color */          
+            font-weight: bold;
+        }
+        """)
+        self.seven_string_check.stateChanged.connect(self.update_tunings)
+
+        # Tuning dropdown
         self.tuning = QComboBox()
-        self.tuning.addItems(self.tunings)
+        self.tuning.addItems(self.standard_tunings)
         self.tuning.setEditable(True)
         self.tuning.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tuning.customContextMenuRequested.connect(self.showTuningContextMenu)
-        tuning_layout.addWidget(self.tuning)
+        
+        # Layout for tuning section
+        tuning_section_layout = QHBoxLayout()
+        tuning_section_layout.addWidget(self.seven_string_check)
+        tuning_section_layout.addWidget(self.tuning)
         
         # Add/Remove tuning buttons
         tuning_buttons = QHBoxLayout()
@@ -191,6 +202,8 @@ class AddTabDialog(QDialog):
         remove_tuning_btn.clicked.connect(self.deleteTuning)
         tuning_buttons.addWidget(remove_tuning_btn)
         
+        # Combine layouts
+        tuning_layout.addLayout(tuning_section_layout)
         tuning_layout.addLayout(tuning_buttons)
         
         # Rating stars
@@ -212,39 +225,30 @@ class AddTabDialog(QDialog):
 
         # Initial state
         self.onBandChanged(self.band_combo.currentText())
+        self.update_tunings()
+
+    def update_tunings(self, state=None):
+        """Update tuning dropdown based on 7-string checkbox"""
+        # Store current text to try to preserve it if possible
+        current_text = self.tuning.currentText()
+        
+        # Clear and repopulate tuning dropdown
+        self.tuning.clear()
+        tunings = (self.seven_string_tunings if self.seven_string_check.isChecked() 
+                   else self.standard_tunings)
+        
+        # Add tunings to dropdown
+        self.tuning.addItems(tunings)
+        
+        # Try to restore previous text if it exists in the new list
+        if current_text in tunings:
+            self.tuning.setCurrentText(current_text)
 
     def onBandChanged(self, text):
         # Show/hide new band name field
         show_new_band = (text == "-- New Band --")
         self.new_band_label.setVisible(show_new_band)
         self.new_band.setVisible(show_new_band)
-
-    def getTabData(self):
-        """Get the entered tab data"""
-        band = self.band_combo.currentText()
-
-        # If "-- New Band --" is selected, get the name from the new band field
-        if band == "-- New Band --":
-            band = self.new_band.text().strip()
-            if not band:
-                QMessageBox.warning(self, "Warning", "Please enter a band name")
-                return None  # No band name entered
-
-        # Check for required fields
-        title = self.title.text().strip()
-        if not title:
-            QMessageBox.warning(self, "Warning", "Please enter a title")
-            return None
-
-        # Return the tab data
-        return {
-            "band": band,
-            "album": self.album.text().strip(),
-            "title": title,
-            "tuning": self.tuning.currentText().strip(),
-            "rating": self.rating_stars.getRating(),
-            "genre": self.genre.text().strip()
-        }
 
     def showTuningContextMenu(self, position):
         """Show context menu for right-click on tuning combo box"""
@@ -260,34 +264,54 @@ class AddTabDialog(QDialog):
         menu.addAction(add_action)
         menu.addAction(delete_action)
         menu.exec_(self.tuning.mapToGlobal(position))
-        
+
     def addNewTuning(self):
         """Add a new tuning to the dropdown and database"""
-        new_tuning, ok = QInputDialog.getText(self, "Add New Tuning", "Enter tuning name:")
+        is_seven_string = self.seven_string_check.isChecked()
+        new_tuning, ok = QInputDialog.getText(
+            self, 
+            f"Add New {'7-String' if is_seven_string else 'Standard'} Tuning", 
+            "Enter tuning name:"
+        )
+        
         if ok and new_tuning:
-            if new_tuning not in self.tunings:
+            # Check against current tuning list
+            current_tunings = (self.seven_string_tunings if is_seven_string 
+                               else self.standard_tunings)
+            
+            if new_tuning not in current_tunings:
                 # Add to database if parent has db_manager
                 try:
                     if hasattr(self.parent(), 'db_manager'):
-                        self.parent().db_manager.add_tuning(new_tuning)
-                        # Update combobox
-                        self.tuning.addItem(new_tuning)
-                        self.tunings.append(new_tuning)
-                        # Select the newly added tuning
+                        self.parent().db_manager.add_tuning(new_tuning, is_seven_string)
+                        
+                        # Update local tuning lists
+                        if is_seven_string:
+                            self.seven_string_tunings.append(new_tuning)
+                        else:
+                            self.standard_tunings.append(new_tuning)
+                        
+                        # Update dropdown
+                        self.update_tunings()
                         self.tuning.setCurrentText(new_tuning)
                     else:
-                        # Just add to combobox if no db_manager
-                        self.tuning.addItem(new_tuning)
-                        self.tunings.append(new_tuning)
+                        # Just add to current list if no db_manager
+                        if is_seven_string:
+                            self.seven_string_tunings.append(new_tuning)
+                        else:
+                            self.standard_tunings.append(new_tuning)
+                        
+                        self.update_tunings()
                         self.tuning.setCurrentText(new_tuning)
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Failed to add tuning: {str(e)}")
             else:
                 QMessageBox.information(self, "Duplicate", "This tuning already exists in the database.")
-                
+
     def deleteTuning(self):
         """Delete the currently selected tuning from dropdown and database"""
         current_tuning = self.tuning.currentText()
+        is_seven_string = self.seven_string_check.isChecked()
         
         # Confirm deletion
         reply = QMessageBox.question(
@@ -310,14 +334,44 @@ class AddTabDialog(QDialog):
                 QMessageBox.warning(self, "Cannot Delete", 
                                     "This tuning cannot be deleted because it is being used by existing tabs.")
                 return
-        else:
-            # Always allow deletion if no db_manager
-            deleted = True
-        
-        # If deleted from database (or no db to delete from), remove from the combo box
-        if deleted:
-            index = self.tuning.currentIndex()
-            if index >= 0:
-                self.tuning.removeItem(index)
-                if current_tuning in self.tunings:
-                    self.tunings.remove(current_tuning)
+            else:
+                # Remove the tuning from the respective list
+                if is_seven_string:
+                    self.seven_string_tunings.remove(current_tuning)
+                else:
+                    self.standard_tunings.remove(current_tuning)
+                
+                # Refresh the tuning dropdown
+                self.update_tunings()
+
+    def getTabData(self):
+        """Get the entered tab data"""
+        band = self.band_combo.currentText()
+
+        # If "-- New Band --" is selected, get the name from the new band field
+        if band == "-- New Band --":
+            band = self.new_band.text().strip()
+            if not band:
+                QMessageBox.warning(self, "Warning", "Please enter a band name")
+                return None  # No band name entered
+
+        # Check for required fields
+        title = self.title.text().strip()
+        if not title:
+            QMessageBox.warning(self, "Warning", "Please enter a title")
+            return None
+
+        # Tuning management
+        tuning = self.tuning.currentText().strip()
+        is_seven_string = self.seven_string_check.isChecked()
+
+        # Return the tab data with additional 7-string context
+        return {
+            "band": band,
+            "album": self.album.text().strip(),
+            "title": title,
+            "tuning": tuning,
+            "is_seven_string": is_seven_string,
+            "rating": self.rating_stars.getRating(),
+            "genre": self.genre.text().strip()
+        }

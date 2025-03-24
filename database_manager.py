@@ -11,6 +11,28 @@ class DatabaseManager:
         self.db_path = db_path
         self.initialize_db()
 
+    def migrate_tunings_table(self):
+        """Migrate tunings table to add is_seven_string column"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            # Check if column exists
+            cursor.execute("PRAGMA table_info(tunings)")
+            columns = cursor.fetchall()
+            column_names = [column[1] for column in columns]
+
+            if 'is_seven_string' not in column_names:
+                # Add the column with a default of 0
+                cursor.execute("ALTER TABLE tunings ADD COLUMN is_seven_string INTEGER DEFAULT 0")
+                conn.commit()
+                print("Added is_seven_string column to tunings table")
+
+        except sqlite3.OperationalError as e:
+            print(f"Error migrating tunings table: {e}")
+        finally:
+            conn.close()
+
     def initialize_db(self):
         """Create tables if they don't exist"""
         conn = sqlite3.connect(self.db_path)
@@ -42,7 +64,8 @@ class DatabaseManager:
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS tunings (
             id INTEGER PRIMARY KEY,
-            name TEXT UNIQUE NOT NULL
+            name TEXT UNIQUE NOT NULL,
+            is_seven_string INTEGER DEFAULT 0
         )
         ''')
         
@@ -59,10 +82,13 @@ class DatabaseManager:
         # Insert default tunings if they don't exist
         default_tunings = ["E A D G B E", "C G C F A D", "D G C F A D"]
         for tuning in default_tunings:
-            cursor.execute("INSERT OR IGNORE INTO tunings (name) VALUES (?)", (tuning,))
+            cursor.execute("INSERT OR IGNORE INTO tunings (name, is_seven_string) VALUES (?, 0)", (tuning,))
 
         conn.commit()
         conn.close()
+
+        # Call migration method
+        self.migrate_tunings_table()
 
     def get_all_bands(self):
         """Get all bands from the database"""
@@ -131,24 +157,31 @@ class DatabaseManager:
         conn.close()
         return tabs
 
-    def get_all_tunings(self):
-        """Get all tunings from the database"""
+    def get_all_tunings(self, seven_string=False):
+        """Get tunings, optionally filtering by 7-string"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("SELECT name FROM tunings ORDER BY name")
+        if seven_string:
+            cursor.execute("SELECT name FROM tunings WHERE is_seven_string = 1 ORDER BY name")
+        else:
+            cursor.execute("SELECT name FROM tunings WHERE is_seven_string = 0 ORDER BY name")
+        
         tunings = [row[0] for row in cursor.fetchall()]
 
         conn.close()
         return tunings
 
-    def add_tuning(self, tuning_name):
+    def add_tuning(self, tuning_name, is_seven_string=False):
         """Add a new tuning to the database"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
         try:
-            cursor.execute("INSERT OR IGNORE INTO tunings (name) VALUES (?)", (tuning_name,))
+            cursor.execute(
+                "INSERT OR IGNORE INTO tunings (name, is_seven_string) VALUES (?, ?)", 
+                (tuning_name, 1 if is_seven_string else 0)
+            )
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -157,14 +190,7 @@ class DatabaseManager:
             conn.close()
 
     def delete_tuning(self, tuning_name):
-        """Delete a tuning from the database
-        
-        Args:
-            tuning_name (str): Name of the tuning to delete
-            
-        Returns:
-            bool: True if tuning was deleted, False if it was not found or could not be deleted
-        """
+        """Delete a tuning from the database"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -194,17 +220,7 @@ class DatabaseManager:
             return False
 
     def add_tab(self, tab_data):
-        """Add a new tab to the database with duplicate checking
-        
-        Args:
-            tab_data (dict): Data for the new tab
-            
-        Returns:
-            int: ID of the newly added tab
-            
-        Raises:
-            ValueError: If the tab is a duplicate
-        """
+        """Add a new tab to the database with duplicate checking"""
         # Check for duplicate before attempting to add
         if self.tab_exists(tab_data["band"], tab_data["album"], tab_data["title"]):
             raise ValueError(f"A tab for '{tab_data['title']}' by '{tab_data['band']}' from album '{tab_data['album']}' already exists")
@@ -215,6 +231,20 @@ class DatabaseManager:
         try:
             # Get or create band
             band_id = self.get_band_id(tab_data["band"])
+
+            # Update tuning table (if 7-string flag is present)
+            is_seven_string = tab_data.get('is_seven_string', False)
+            
+            # First, check if tuning exists
+            cursor.execute("SELECT id FROM tunings WHERE name = ?", (tab_data["tuning"],))
+            tuning_result = cursor.fetchone()
+            
+            if not tuning_result:
+                # If tuning doesn't exist, add it with 7-string flag
+                cursor.execute(
+                    "INSERT INTO tunings (name, is_seven_string) VALUES (?, ?)", 
+                    (tab_data["tuning"], 1 if is_seven_string else 0)
+                )
 
             # Insert tab
             cursor.execute('''
@@ -248,6 +278,20 @@ class DatabaseManager:
         try:
             # Get or create band
             band_id = self.get_band_id(tab_data["band"])
+
+            # Update tuning table (if 7-string flag is present)
+            is_seven_string = tab_data.get('is_seven_string', False)
+            
+            # First, check if tuning exists
+            cursor.execute("SELECT id FROM tunings WHERE name = ?", (tab_data["tuning"],))
+            tuning_result = cursor.fetchone()
+            
+            if not tuning_result:
+                # If tuning doesn't exist, add it with 7-string flag
+                cursor.execute(
+                    "INSERT INTO tunings (name, is_seven_string) VALUES (?, ?)", 
+                    (tab_data["tuning"], 1 if is_seven_string else 0)
+                )
 
             # Update tab
             cursor.execute('''
@@ -425,11 +469,28 @@ class DatabaseManager:
                 for _, row in df.iterrows():
                     # Extract data from row
                     try:
-                        album = row.get('Album', '')
+                        album = row.get('Album Name', '')
                         title = row.get('Title', '')
                         tuning = row.get('Tuning', '')
-                        rating = row.get('Rating', 3)
+                        rating = row.get('Rating', 1)
                         genre = row.get('Genre', '')
+                        
+                        # Determine if 7-string (new column or inference)
+                        is_seven_string = row.get('Is7String', False)
+                        
+                        # Check if tuning exists in tunings table
+                        cursor.execute(
+                            "SELECT id FROM tunings WHERE name = ?", 
+                            (tuning,)
+                        )
+                        tuning_result = cursor.fetchone()
+                        
+                        # If tuning doesn't exist, add it
+                        if not tuning_result:
+                            cursor.execute(
+                                "INSERT INTO tunings (name, is_seven_string) VALUES (?, ?)", 
+                                (tuning, 1 if is_seven_string else 0)
+                            )
 
                         # Insert tab
                         cursor.execute('''
@@ -440,19 +501,14 @@ class DatabaseManager:
                         print(f"Error importing row: {e}")
                         continue
 
-            conn.commit()
-            conn.close()
-            
-            # Clean up any empty bands that might have been created
-            self.clean_up_empty_bands()
+                conn.commit()
+                conn.close()
 
             return True
 
         except Exception as e:
             print(f"Error importing Excel file: {e}")
             return False
-        
-        # Add this method to the database_manager.py file in the DatabaseManager class
 
     def tab_exists(self, band_name, album, title):
         """Check if a tab with the same band, album and title already exists
