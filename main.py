@@ -95,6 +95,16 @@ def main():
         QMenu::item:selected {
             background-color: #0078d7;
         }
+                      
+        /* Pitch Shifter button */
+        QPushButton#pitch_shifter_btn {
+            background-color: #333337;
+            min-width: 120px;
+        }
+        QPushButton#pitch_shifter_btn:hover {
+            background-color: #e89018;
+        }
+
     """)
 
     window = GuitarTabsApp()
@@ -102,7 +112,7 @@ def main():
     # Set object names for styling
     window.all_tabs_btn.setObjectName("all_tabs_btn")
     window.learned_tabs_btn.setObjectName("learned_tabs_btn")
-    
+    window.pitch_shifter_btn.setObjectName("pitch_shifter_btn")
     window.show()
 
     sys.exit(app.exec_())

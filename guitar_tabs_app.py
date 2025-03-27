@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (QSizePolicy)
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QStyledItemDelegate, QStyleOptionButton
 from PyQt5.QtCore import QRect
+from pitch_shifter import PitchShifterDialog
 import webbrowser
 import urllib.parse
 
@@ -218,6 +219,11 @@ class GuitarTabsApp(QMainWindow):
         self.learned_tabs_btn.setCheckable(True)
         self.learned_tabs_btn.clicked.connect(lambda: self.switch_mode("learned"))
         self.mode_buttons_layout.addWidget(self.learned_tabs_btn)
+
+        self.pitch_shifter_btn = QPushButton("Pitch Shifter")
+        self.pitch_shifter_btn.setCheckable(False)  # Not a toggle button like the others
+        self.pitch_shifter_btn.clicked.connect(self.show_pitch_shifter)
+        self.mode_buttons_layout.addWidget(self.pitch_shifter_btn)
         
         # Style the mode buttons
         self.all_tabs_btn.setStyleSheet("""
@@ -234,6 +240,18 @@ class GuitarTabsApp(QMainWindow):
                 border: none;
                 color: black;
                 font-weight: bold;                         
+            }
+        """)
+
+        self.pitch_shifter_btn.setStyleSheet("""
+            QPushButton:checked {
+                background-color: #e3ac63;          
+                border: none;
+                color: black;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #e3ac63;
             }
         """)
         
@@ -1442,5 +1460,10 @@ class GuitarTabsApp(QMainWindow):
             import traceback
             traceback.print_exc()
             self.statusBar().showMessage(f"Error searching for tab: {str(e)}")
+
+    def show_pitch_shifter(self):
+        """Show the pitch shifter dialog"""
+        dialog = PitchShifterDialog(self.db_manager, self)
+        dialog.exec_()
 
             

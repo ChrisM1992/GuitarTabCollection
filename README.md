@@ -15,5 +15,5 @@ INFOS AND UPDATES
 NEXT UP
 - Add Filter where you can also filter for only 7 String Guitar tabs
 - Add button to also search for taps in songsterr (not planned soon) 
--
+- Add Pitch Shifter Calculator
 
