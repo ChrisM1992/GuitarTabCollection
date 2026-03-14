@@ -67,8 +67,10 @@ class DatabaseManager:
         cursor = conn.cursor()
         try:
             cursor.execute("PRAGMA table_info(tunings)")
-            if 'is_seven_string' not in [col for col in cursor.fetchall()]:[1]
-            cursor.execute(
+            # BUG FIX 1: was `:[1]` at end — invalid syntax. col[1] extracts column name from pragma row.
+            col_names = [col[1] for col in cursor.fetchall()]
+            if 'is_seven_string' not in col_names:
+                cursor.execute(
                     "ALTER TABLE tunings ADD COLUMN is_seven_string INTEGER DEFAULT 0"
                 )
             conn.commit()
@@ -83,10 +85,12 @@ class DatabaseManager:
         cursor = conn.cursor()
         try:
             cursor.execute("PRAGMA table_info(tabs)")
-            if 'notes' not in [col for col in cursor.fetchall()]:[1]
-            cursor.execute("ALTER TABLE tabs ADD COLUMN notes TEXT DEFAULT ''")
-            conn.commit()
-            print("Migrated: added 'notes' column to tabs table.")
+            # BUG FIX 2: same :[1] syntax error as above
+            col_names = [col[1] for col in cursor.fetchall()]
+            if 'notes' not in col_names:
+                cursor.execute("ALTER TABLE tabs ADD COLUMN notes TEXT DEFAULT ''")
+                conn.commit()
+                print("Migrated: added 'notes' column to tabs table.")
         except sqlite3.OperationalError as e:
             print(f"Notes migration warning: {e}")
         finally:
@@ -109,7 +113,9 @@ class DatabaseManager:
         cursor.execute("SELECT id FROM bands WHERE name = ?", (band_name,))
         result = cursor.fetchone()
         if result:
-            band_id = result
+            # BUG FIX 3: was `band_id = result` which assigned the whole tuple (id,)
+            # instead of the integer id value
+            band_id = result[0]
         else:
             cursor.execute("INSERT INTO bands (name) VALUES (?)", (band_name,))
             band_id = cursor.lastrowid
@@ -267,11 +273,15 @@ class DatabaseManager:
             result = cursor.fetchone()
             if not result:
                 return False
+            # BUG FIX 4: was passing `result` (a tuple) as band_id parameter.
+            # Must pass result[0] (the integer id).
             cursor.execute(
                 "SELECT COUNT(*) FROM tabs WHERE band_id = ? AND album = ? AND title = ?",
-                (result, album, title)
+                (result[0], album, title)
             )
-            return cursor.fetchone() > 0
+            # BUG FIX 5: fetchone() returns a tuple like (0,) or (1,) — comparing
+            # a tuple to 0 with `> 0` is always True. Must unpack with [0].
+            return cursor.fetchone()[0] > 0
         except Exception as e:
             print(f"Error checking for duplicate tab: {e}")
             return False
@@ -288,7 +298,8 @@ class DatabaseManager:
             "SELECT name FROM tunings WHERE is_seven_string = ? ORDER BY name",
             (1 if seven_string else 0,)
         )
-        tunings = [row for row in cursor.fetchall()]
+        # Each row is a tuple like ('E A D G B E',) — extract the string
+        tunings = [row[0] for row in cursor.fetchall()]
         conn.close()
         return tunings
 
@@ -312,7 +323,8 @@ class DatabaseManager:
         cursor = conn.cursor()
         try:
             cursor.execute("SELECT COUNT(*) FROM tabs WHERE tuning = ?", (tuning_name,))
-            if cursor.fetchone() > 0:
+            # fetchone() returns a tuple — must unpack
+            if cursor.fetchone()[0] > 0:
                 return False
             cursor.execute("DELETE FROM tunings WHERE name = ?", (tuning_name,))
             conn.commit()
@@ -410,7 +422,7 @@ class DatabaseManager:
                 df = excel_file.parse(sheet_name)
                 cursor.execute("SELECT id FROM bands WHERE name = ?", (sheet_name,))
                 result = cursor.fetchone()
-                band_id = result if result else None
+                band_id = result[0] if result else None
                 if not band_id:
                     cursor.execute("INSERT INTO bands (name) VALUES (?)", (sheet_name,))
                     band_id = cursor.lastrowid

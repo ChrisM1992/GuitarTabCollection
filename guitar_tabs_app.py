@@ -65,13 +65,13 @@ class StarRatingDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         painter.save()
 
-        # Background — respect selection and alternating rows
+        # Background — respect selection and alternating rows (dark theme)
         if option.state & 0x0002:  # State_Selected
             painter.fillRect(option.rect, option.palette.highlight())
         elif index.row() % 2 == 1:
-            painter.fillRect(option.rect, QColor("#f5f5f5"))
+            painter.fillRect(option.rect, QColor("#2a2a2d"))
         else:
-            painter.fillRect(option.rect, QColor("#ffffff"))
+            painter.fillRect(option.rect, QColor("#202022"))
 
         # Get numeric rating from source data
         try:
@@ -526,8 +526,12 @@ QPushButton:checked {
     # Delegates setup  (UG button + inline star rating)
     # ------------------------------------------------------------------
     def _setup_delegates(self):
-        ug_delegate   = UltimateGuitarDelegate(self)
-        star_delegate = StarRatingDelegate(self)
+        # Store delegates as instance variables to prevent Python's GC from
+        # collecting them. PyQt5 does NOT keep a Python-side reference for
+        # setItemDelegateForColumn(), so local variables get freed and Qt
+        # would access dangling C++ pointers → access violation / app crash.
+        self._ug_delegate   = UltimateGuitarDelegate(self)
+        self._star_delegate = StarRatingDelegate(self)
 
         for i in range(self.tabs_widget.count()):
             table = self.tabs_widget.widget(i)
@@ -544,7 +548,7 @@ QPushButton:checked {
             # Ultimate Guitar button column
             try:
                 col = source_model.columns.index("Ultimate Guitar")
-                table.setItemDelegateForColumn(col, ug_delegate)
+                table.setItemDelegateForColumn(col, self._ug_delegate)
                 table.setColumnWidth(col, 100)
             except ValueError:
                 pass
@@ -552,7 +556,7 @@ QPushButton:checked {
             # Inline star rating column
             try:
                 col = source_model.columns.index("Rating")
-                table.setItemDelegateForColumn(col, star_delegate)
+                table.setItemDelegateForColumn(col, self._star_delegate)
             except ValueError:
                 pass
 
