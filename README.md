@@ -13,11 +13,17 @@ INFOS AND UPDATES
 
 
 
+<<<<<<< HEAD
 
 
 BUG FIXES
 - Fixed a BUG where UI reloaded to landing Page when editing something
 - fixed a bug where it was not possible to edit Titles in the learned section
 - Fixed data offset bug — "Notes" added before "Learned Date"
+=======
+BUG FIXES
+- Fixed a BUG where UI reloaded to landing Page when editing something
+- fixed a bug where it was not possible to edit Titles in the learned section
+>>>>>>> d67910844f68a63072dd37db02c569ad2911c1f0
 
 
