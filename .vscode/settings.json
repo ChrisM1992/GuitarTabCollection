@@ -1,0 +1,9 @@
+{
+    "workbench.startupEditor": "none",
+    "workbench.editor.restoreViewState": true,
+    "files.hotExit": "onExitAndWindowClose",
+    "window.restoreWindows": "all",
+    "editor.cursorSurroundingLines": 3,
+    "explorer.autoReveal": true,
+    "python.defaultInterpreterPath": "C:\\Users\\User\\AppData\\Local\\Python\\pythoncore-3.14-64\\python.exe"
+}

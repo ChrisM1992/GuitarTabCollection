@@ -1,0 +1,42 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        // Restore all open editors exactly as they were on close
+        "workbench.startupEditor": "none",
+        "workbench.editor.restoreViewState": true,
+
+        // Keep unsaved changes across close/reopen
+        "files.hotExit": "onExitAndWindowClose",
+
+        // Restore the window to the same state (open files, panels, layout)
+        "window.restoreWindows": "all",
+
+        // Remember cursor position, scroll, folding per file
+        "editor.cursorSurroundingLines": 3,
+
+        // Explorer: restore expanded folders
+        "explorer.autoReveal": true
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "Run App",
+                "type": "python",
+                "request": "launch",
+                "program": "${workspaceFolder}/main.py",
+                "console": "integratedTerminal"
+            }
+        ]
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-python.python",
+            "ms-python.pylint"
+        ]
+    }
+}
