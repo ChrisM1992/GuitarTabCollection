@@ -258,7 +258,7 @@ class GuitarTabApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Guitar Tabs Collection Manager")
+        self.setWindowTitle("GuitarTabs")
         self.setMinimumSize(1400, 800)
         self.drag_position = None
 
@@ -1221,7 +1221,7 @@ QPushButton:checked {
         lyt.setContentsMargins(10, 0, 10, 0)
         lyt.setSpacing(5)
 
-        title_label = QLabel("Guitar Tabs Collection Manager")
+        title_label = QLabel("GuitarTabs")
         title_label.setStyleSheet("color: white; font-weight: bold;")
         lyt.addWidget(title_label)
         lyt.addStretch()
