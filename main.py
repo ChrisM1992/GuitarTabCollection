@@ -1,16 +1,15 @@
-# Update to main.py to add button styling
 import sys
+import traceback
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
-from guitar_tabs_app import GuitarTabsApp
+from guitar_tabs_app import GuitarTabApp  # Fixed: was GuitarTabsApp
+
 
 def main():
     app = QApplication(sys.argv)
 
-    # Set application style to Fusion for a modern look
     app.setStyle("Fusion")
 
-    # Apply a stylesheet for additional styling test
     app.setStyleSheet("""
         QMainWindow, QDialog {
             background-color: #2d2d30;
@@ -22,7 +21,7 @@ def main():
             selection-background-color: #0078d7;
             selection-color: white;
             gridline-color: #3e3e42;
-            alternate-background-color: #2a2a2d;  /* Explicitly set alternate row color */
+            alternate-background-color: #2a2a2d;
         }
         QPushButton {
             background-color: #ec7846;
@@ -34,7 +33,7 @@ def main():
         QPushButton:hover {
             background-color: #bf6741;
         }
-        
+
         /* Mode switch buttons */
         QPushButton#all_tabs_btn, QPushButton#learned_tabs_btn {
             background-color: #333337;
@@ -54,7 +53,7 @@ def main():
         QPushButton#learned_tabs_btn:hover:!checked {
             background-color: #444448;
         }
-        
+
         QTabWidget::pane {
             border: 1px solid #3e3e42;
         }
@@ -95,7 +94,7 @@ def main():
         QMenu::item:selected {
             background-color: #0078d7;
         }
-                      
+
         /* Pitch Shifter button */
         QPushButton#pitch_shifter_btn {
             background-color: #333337;
@@ -104,18 +103,21 @@ def main():
         QPushButton#pitch_shifter_btn:hover {
             background-color: #e89018;
         }
-
     """)
 
-    window = GuitarTabsApp()
-    
-    # Set object names for styling
-    window.all_tabs_btn.setObjectName("all_tabs_btn")
-    window.learned_tabs_btn.setObjectName("learned_tabs_btn")
-    window.pitch_shifter_btn.setObjectName("pitch_shifter_btn")
-    window.show()
+    try:
+        window = GuitarTabApp()
 
-    sys.exit(app.exec_())
+        # Set object names for styling
+        window.all_tabs_btn.setObjectName("all_tabs_btn")
+        window.learned_tabs_btn.setObjectName("learned_tabs_btn")
+        window.pitch_shifter_btn.setObjectName("pitch_shifter_btn")
+
+        window.show()
+        sys.exit(app.exec_())
+    except Exception as e:
+        traceback.print_exc()
+        input("Press Enter to exit...")
 
 
 if __name__ == "__main__":

@@ -405,7 +405,7 @@ class DatabaseManager:
             return False
 
 
-class GuitarTabsApp(QMainWindow):
+class GuitarTabApp(QMainWindow):
     """Main application window for the Guitar Tabs Collection Manager"""
 
     def __init__(self):

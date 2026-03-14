@@ -1,22 +1,23 @@
 INFOS AND UPDATES
 
-  - Add Category " Learning" -- fixed
-  - Add Comment Secion in "Learned and Learning for infos --> fixed
-  - Check why link wont open in default browser (opens in chrome instead of edge atm) --> fixed
-  - Color Updates where made to GUI
-  - Added a second DB for 7 String Tunings
-  - Added a checkbox to choose between 6 and 7 string
-  - Fixed a bug where TUNING DB for Mutli Add and Single Add didnt sync correctly with same DB
-  - Fixed a Bug where random Tunings where addad into TuningDB (standard tunings where in the backend)
-  - Fixed a Bug where Software was not using the default Browser
-  - Added a calculator which allowes to calculate Tuning Pitches for 6 and 7 String guitars
-  - Fixed an issue where the pitch was not calculated correctly 
-  - UI changes for Pitch shifter
+  - Backup DB Button implemented
+  - Export CSV Button - exports current views data
+  - Bulk rating - Bulk rating — right-click any selection → "Set Rating" → applies to all
+  - Added Shortcuts like F2, DEL, CTRL+F
+  - Click any star cell to instantly update rating — no dialog needed
+  - Added "Notes" to columns list — resizable, 180px default width 
+  - Notes uses Interactive resize mode so you can drag it wider
+  - Edit shows date picker
+  - Edit prefills notes	
+  - Styled printable HTML, opens in browser after save
 
 
 
-NEXT UP
-- Add Filter where you can also filter for only 7 String Guitar tabs
-- Add button to also search for taps in songsterr (not planned soon) 
+
+
+BUG FIXES
+- Fixed a BUG where UI reloaded to landing Page when editing something
+- fixed a bug where it was not possible to edit Titles in the learned section
+- Fixed data offset bug — "Notes" added before "Learned Date"
 
 

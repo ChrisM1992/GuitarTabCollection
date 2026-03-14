@@ -1,30 +1,31 @@
 import os
 import csv
+import shutil
+import traceback
 import webbrowser
 import urllib.parse
-import traceback
+from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QMainWindow, QTableView, QVBoxLayout, QHBoxLayout, QWidget,
     QPushButton, QComboBox, QLabel, QLineEdit, QHeaderView, QTabWidget,
     QMessageBox, QFileDialog, QDialog, QFormLayout, QDialogButtonBox,
-    QMenu, QAction, QSizePolicy, QStyledItemDelegate
+    QMenu, QSizePolicy, QStyledItemDelegate, QShortcut
 )
 from PyQt5.QtCore import Qt, QSortFilterProxyModel, QItemSelectionModel, QEvent
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QKeySequence, QFont
 
 from tabs_data_model import TabsDataModel
 from database_manager import DatabaseManager
-from add_tab_dialog import AddTabDialog
+from add_tab_dialog import AddTabDialog, StarRating
 from add_tab_multi import BatchAddDialog
 from pitch_shifter import PitchShifterDialog
 
 
 # ---------------------------------------------------------------------------
-# Module-level delegate — defined once, reused on every load_data() call
+# Ultimate Guitar column delegate
 # ---------------------------------------------------------------------------
 class UltimateGuitarDelegate(QStyledItemDelegate):
-    """Renders a clickable 'Open' button in the Ultimate Guitar column."""
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -32,7 +33,7 @@ class UltimateGuitarDelegate(QStyledItemDelegate):
 
     def paint(self, painter, option, index):
         painter.save()
-        bg = QColor("#eaa13f") if option.state & 0x2000 else QColor("#e3ac63")  # State_MouseOver
+        bg = QColor("#eaa13f") if option.state & 0x2000 else QColor("#e3ac63")
         painter.setPen(Qt.NoPen)
         painter.setBrush(bg)
         painter.drawRoundedRect(option.rect.adjusted(2, 2, -2, -2), 4, 4)
@@ -44,11 +45,103 @@ class UltimateGuitarDelegate(QStyledItemDelegate):
         if event.type() == QEvent.MouseButtonRelease:
             source_model = model.sourceModel()
             source_row = model.mapToSource(index).row()
-            band = source_model._data[source_row][1]
+            band  = source_model._data[source_row][1]
             title = source_model._data[source_row][3]
             self._main_window.searchTabOnline(band, title)
             return True
         return super().editorEvent(event, model, option, index)
+
+
+# ---------------------------------------------------------------------------
+# Inline star rating delegate  ← NEW Round 2
+# ---------------------------------------------------------------------------
+class StarRatingDelegate(QStyledItemDelegate):
+    """Click a star cell to instantly update the rating without opening a dialog."""
+
+    def __init__(self, main_window, parent=None):
+        super().__init__(parent)
+        self._mw = main_window
+
+    def paint(self, painter, option, index):
+        painter.save()
+
+        # Background — respect selection and alternating rows
+        if option.state & 0x0002:  # State_Selected
+            painter.fillRect(option.rect, option.palette.highlight())
+        elif index.row() % 2 == 1:
+            painter.fillRect(option.rect, QColor("#f5f5f5"))
+        else:
+            painter.fillRect(option.rect, QColor("#ffffff"))
+
+        # Get numeric rating from source data
+        try:
+            source_model = index.model().sourceModel()
+            source_row   = index.model().mapToSource(index).row()
+            rating = int(source_model._data[source_row][5])
+        except Exception:
+            rating = 0
+
+        # Draw filled/empty stars
+        font = QFont()
+        font.setPointSize(12)
+        painter.setFont(font)
+        cell_w = option.rect.width()
+        star_w = cell_w / 5
+
+        for i in range(5):
+            star_rect = option.rect.adjusted(int(i * star_w), 1, 0, -1)
+            star_rect.setWidth(int(star_w))
+            char = "★" if i < rating else "☆"
+            color = QColor("#FFD700") if i < rating else QColor("#aaaaaa")
+            painter.setPen(color)
+            painter.drawText(star_rect, Qt.AlignCenter, char)
+
+        painter.restore()
+
+    def editorEvent(self, event, model, option, index):
+        if event.type() == QEvent.MouseButtonRelease:
+            source_model = model.sourceModel()
+            source_row   = model.mapToSource(index).row()
+            tab_id       = source_model._data[source_row][0]
+
+            x         = event.pos().x() - option.rect.x()
+            star_w    = option.rect.width() / 5
+            new_rating = min(5, max(1, int(x / star_w) + 1))
+
+            try:
+                self._mw.db_manager.update_rating(tab_id, new_rating)
+                self._mw.load_data(preserve_tab=True)
+                stars = "★" * new_rating + "☆" * (5 - new_rating)
+                self._mw.statusBar().showMessage(
+                    f"Rating updated to {stars}"
+                )
+            except Exception as e:
+                print(f"Inline rating error: {e}")
+            return True
+        return super().editorEvent(event, model, option, index)
+
+
+# ---------------------------------------------------------------------------
+# Bulk Set Rating dialog
+# ---------------------------------------------------------------------------
+class SetRatingDialog(QDialog):
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Set Rating")
+        self.setFixedWidth(260)
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Select new rating for all selected tabs:"))
+        self.rating_stars = StarRating(self)
+        self.rating_stars.setRating(3)
+        layout.addWidget(self.rating_stars)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def getRating(self):
+        return self.rating_stars.getRating()
 
 
 # ---------------------------------------------------------------------------
@@ -98,11 +191,11 @@ class AdvancedFilterDialog(QDialog):
 
     def get_filter_data(self):
         return {
-            "band": self.band_filter.currentText() if self.band_filter.currentIndex() > 0 else "",
-            "album": self.album_filter.text().strip(),
+            "band":   self.band_filter.currentText() if self.band_filter.currentIndex() > 0 else "",
+            "album":  self.album_filter.text().strip(),
             "rating": self.rating_filter.currentIndex(),
             "tuning": self.tuning_filter.text().strip(),
-            "genre": self.genre_filter.text().strip(),
+            "genre":  self.genre_filter.text().strip(),
         }
 
 
@@ -113,71 +206,62 @@ class CustomProxyModel(QSortFilterProxyModel):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.min_rating = 0
-        self.band_filter = ""
-        self.album_filter = ""
+        self.min_rating    = 0
+        self.band_filter   = ""
+        self.album_filter  = ""
         self.tuning_filter = ""
-        self.genre_filter = ""
+        self.genre_filter  = ""
 
     def set_rating_filter(self, min_rating):
         self.min_rating = min_rating
         self.invalidateFilter()
 
     def set_advanced_filters(self, filters):
-        self.band_filter = filters.get("band", "")
-        self.album_filter = filters.get("album", "")
-        self.min_rating = filters.get("rating", 0)
+        self.band_filter   = filters.get("band", "")
+        self.album_filter  = filters.get("album", "")
+        self.min_rating    = filters.get("rating", 0)
         self.tuning_filter = filters.get("tuning", "")
-        self.genre_filter = filters.get("genre", "")
+        self.genre_filter  = filters.get("genre", "")
         self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row, source_parent):
         if not super().filterAcceptsRow(source_row, source_parent):
             return False
 
-        m = self.sourceModel()
-        row = m._data[source_row]
+        row = self.sourceModel()._data[source_row]
 
-        # Rating — column 5 in both 'all' and 'learned' data tuples
         if self.min_rating > 0:
             try:
                 rating = int(row[5])
                 if self.min_rating == 5:
-                    if rating < 5:
-                        return False
+                    if rating < 5: return False
                 else:
-                    if rating < self.min_rating:
-                        return False
+                    if rating < self.min_rating: return False
             except (IndexError, ValueError):
                 pass
 
-        if self.band_filter and self.band_filter.lower() not in str(row[1]).lower():
-            return False
-        if self.album_filter and self.album_filter.lower() not in str(row[2]).lower():
-            return False
-        if self.tuning_filter and self.tuning_filter.lower() not in str(row[4]).lower():
-            return False
-        if self.genre_filter and self.genre_filter.lower() not in str(row[6]).lower():
-            return False
+        if self.band_filter   and self.band_filter.lower()   not in str(row[1]).lower(): return False
+        if self.album_filter  and self.album_filter.lower()  not in str(row[2]).lower(): return False
+        if self.tuning_filter and self.tuning_filter.lower() not in str(row[4]).lower(): return False
+        if self.genre_filter  and self.genre_filter.lower()  not in str(row[6]).lower(): return False
 
         return True
 
 
 # ---------------------------------------------------------------------------
-# Main application window
+# Main window
 # ---------------------------------------------------------------------------
-class GuitarTabsApp(QMainWindow):
+class GuitarTabApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Guitar Tabs Collection Manager")
         self.setMinimumSize(1400, 800)
-
         self.drag_position = None
 
         app_dir = os.path.dirname(os.path.abspath(__file__))
-        db_path = os.path.join(app_dir, "guitar_tabs.db")
-        self.db_manager = DatabaseManager(db_path)
+        self.db_path    = os.path.join(app_dir, "guitar_tabs.db")
+        self.db_manager = DatabaseManager(self.db_path)
 
         try:
             self.db_manager.clean_up_empty_bands()
@@ -185,7 +269,6 @@ class GuitarTabsApp(QMainWindow):
             print(f"Warning: Could not clean up empty bands on startup: {e}")
 
         self.current_view = "all"
-
         self.initUI()
         self.load_data(preserve_tab=False)
         self.setupCustomTitleBar()
@@ -198,26 +281,24 @@ class GuitarTabsApp(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # ── Top controls ──────────────────────────────────────────────
+        # ── Top bar ───────────────────────────────────────────────────
         top_controls = QHBoxLayout()
-
-        mode_buttons_layout = QHBoxLayout()
+        mode_layout  = QHBoxLayout()
 
         self.all_tabs_btn = QPushButton("Tabs Collection")
         self.all_tabs_btn.setCheckable(True)
         self.all_tabs_btn.setChecked(True)
         self.all_tabs_btn.clicked.connect(lambda: self.switch_mode("all"))
-        mode_buttons_layout.addWidget(self.all_tabs_btn)
+        mode_layout.addWidget(self.all_tabs_btn)
 
         self.learned_tabs_btn = QPushButton("Learned")
         self.learned_tabs_btn.setCheckable(True)
         self.learned_tabs_btn.clicked.connect(lambda: self.switch_mode("learned"))
-        mode_buttons_layout.addWidget(self.learned_tabs_btn)
+        mode_layout.addWidget(self.learned_tabs_btn)
 
         self.pitch_shifter_btn = QPushButton("Pitch Shifter")
-        self.pitch_shifter_btn.setCheckable(False)
         self.pitch_shifter_btn.clicked.connect(self.show_pitch_shifter)
-        mode_buttons_layout.addWidget(self.pitch_shifter_btn)
+        mode_layout.addWidget(self.pitch_shifter_btn)
 
         checked_style = """
 QPushButton:checked {
@@ -229,31 +310,29 @@ QPushButton:checked {
 """
         self.all_tabs_btn.setStyleSheet(checked_style)
         self.learned_tabs_btn.setStyleSheet(checked_style)
-        self.pitch_shifter_btn.setStyleSheet(checked_style + """
-QPushButton:hover { background-color: #e3ac63; }
-""")
+        self.pitch_shifter_btn.setStyleSheet(
+            checked_style + "QPushButton:hover { background-color: #e3ac63; }"
+        )
 
-        top_controls.addLayout(mode_buttons_layout)
+        top_controls.addLayout(mode_layout)
         top_controls.addStretch(1)
 
-        action_buttons_layout = QHBoxLayout()
+        # Action buttons (right side)
+        action_layout = QHBoxLayout()
+        for label, slot in [
+            ("Add New Tab",  self.show_add_dialog),
+            ("Add Multiple", self.show_batch_add_dialog),
+            ("Import CSV",   self.import_from_csv),
+            ("Export CSV",   self.export_to_csv),
+            ("Export HTML",  self.export_to_html),      # ← NEW Round 2
+            ("Backup DB",    self.backup_database),
+        ]:
+            btn = QPushButton(label)
+            btn.clicked.connect(slot)
+            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            action_layout.addWidget(btn)
 
-        self.add_btn = QPushButton("Add New Tab")
-        self.add_btn.clicked.connect(self.show_add_dialog)
-        self.add_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        action_buttons_layout.addWidget(self.add_btn)
-
-        self.batch_add_btn = QPushButton("Add Multiple")
-        self.batch_add_btn.clicked.connect(self.show_batch_add_dialog)
-        self.batch_add_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        action_buttons_layout.addWidget(self.batch_add_btn)
-
-        self.csv_import_btn = QPushButton("Import CSV")
-        self.csv_import_btn.clicked.connect(self.import_from_csv)
-        self.csv_import_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        action_buttons_layout.addWidget(self.csv_import_btn)
-
-        top_controls.addLayout(action_buttons_layout)
+        top_controls.addLayout(action_layout)
         main_layout.addLayout(top_controls)
         main_layout.addSpacing(20)
 
@@ -273,7 +352,7 @@ QPushButton:hover { background-color: #e3ac63; }
         filter_layout.addWidget(self.filter_field)
 
         self.filter_text = QLineEdit()
-        self.filter_text.setPlaceholderText("Type to filter...")
+        self.filter_text.setPlaceholderText("Type to filter...  [Ctrl+F]")
         self.filter_text.textChanged.connect(self.apply_filter)
         filter_layout.addWidget(self.filter_text)
 
@@ -288,8 +367,16 @@ QPushButton:hover { background-color: #e3ac63; }
         filter_layout.addWidget(self.adv_filter_btn)
 
         main_layout.addLayout(filter_layout)
-
         self.statusBar().showMessage("Ready")
+
+        # ── Keyboard shortcuts ────────────────────────────────────────
+        QShortcut(QKeySequence(Qt.Key_Delete), self).activated.connect(self.delete_selected_tabs)
+        QShortcut(QKeySequence(Qt.Key_F2),     self).activated.connect(self.edit_selected_tabs)
+        QShortcut(QKeySequence("Ctrl+F"),      self).activated.connect(self.focus_filter)
+
+    def focus_filter(self):
+        self.filter_text.setFocus()
+        self.filter_text.selectAll()
 
     # ------------------------------------------------------------------
     # Mode switching
@@ -298,29 +385,14 @@ QPushButton:hover { background-color: #e3ac63; }
         if mode == self.current_view:
             return
         self.current_view = mode
-        if mode == "all":
-            self.all_tabs_btn.setChecked(True)
-            self.learned_tabs_btn.setChecked(False)
-        else:
-            self.all_tabs_btn.setChecked(False)
-            self.learned_tabs_btn.setChecked(True)
-        # When switching modes we always want to land on the first tab
+        self.all_tabs_btn.setChecked(mode == "all")
+        self.learned_tabs_btn.setChecked(mode == "learned")
         self.load_data(preserve_tab=False)
 
     # ------------------------------------------------------------------
-    # Data loading  ← FIX: preserve_tab saves & restores active tab
+    # Data loading
     # ------------------------------------------------------------------
     def load_data(self, preserve_tab=True):
-        """Reload data from the database.
-
-        Args:
-            preserve_tab: When True (default) the currently active band tab
-                          is remembered by name and re-selected after rebuild,
-                          so editing/deleting never jumps back to the first tab.
-                          Pass False when intentionally resetting (mode switch,
-                          initial load).
-        """
-        # ── Remember active tab name before clearing ──────────────────
         active_tab_name = None
         if preserve_tab and self.tabs_widget.count() > 0:
             active_tab_name = self.tabs_widget.tabText(self.tabs_widget.currentIndex())
@@ -334,36 +406,43 @@ QPushButton:hover { background-color: #e3ac63; }
             else:
                 self._load_learned_tabs_view()
 
-            # ── Restore active tab by name ────────────────────────────
             if active_tab_name:
                 for i in range(self.tabs_widget.count()):
                     if self.tabs_widget.tabText(i) == active_tab_name:
                         self.tabs_widget.setCurrentIndex(i)
                         break
 
-            # Status bar
             if self.current_view == "all":
                 self.statusBar().showMessage(f"Loaded {len(bands)} bands")
             else:
-                learned_count = len(self.db_manager.get_all_learned_tabs())
-                self.statusBar().showMessage(f"Loaded {learned_count} learned tabs")
+                count = len(self.db_manager.get_all_learned_tabs())
+                self.statusBar().showMessage(f"Loaded {count} learned tabs")
 
-            self._setup_ug_delegates()
+            self._setup_delegates()
 
         except Exception as e:
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Failed to load data: {e}")
-            self.statusBar().showMessage("Error loading data")
 
     def _build_table_view(self, data, columns):
-        """Helper: create a fully-configured QTableView for the given data."""
         table = QTableView()
         model = TabsDataModel(data, columns)
         proxy = CustomProxyModel()
         proxy.setSourceModel(model)
         proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
         table.setModel(proxy)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Stretch)
+
+        # Notes column: interactive width so user can resize it
+        try:
+            notes_col = columns.index("Notes")
+            header.setSectionResizeMode(notes_col, QHeaderView.Interactive)
+            table.setColumnWidth(notes_col, 180)
+        except ValueError:
+            pass
+
         table.hideColumn(0)
         table.setSortingEnabled(True)
         table.setAlternatingRowColors(True)
@@ -374,13 +453,18 @@ QPushButton:hover { background-color: #e3ac63; }
         return table
 
     def _load_all_tabs_view(self, bands):
-        columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Ultimate Guitar"]
+        # data: (id, band, album, title, tuning, rating, genre, notes)
+        columns = [
+            "ID", "Band", "Album", "Title", "Tuning",
+            "Rating", "Genre", "Notes", "Ultimate Guitar"
+        ]
+
         all_tabs = self.db_manager.get_all_tabs()
         if all_tabs:
             self.tabs_widget.addTab(self._build_table_view(all_tabs, columns), "All Tabs")
 
-        general_tabs = []
-        bands_with_few = set()
+        general_tabs    = []
+        bands_with_few  = set()
 
         for band_id, band_name in bands:
             band_tabs = self.db_manager.get_tabs_for_band(band_id)
@@ -391,86 +475,99 @@ QPushButton:hover { background-color: #e3ac63; }
                 self.tabs_widget.addTab(self._build_table_view(band_tabs, columns), band_name)
 
         if general_tabs:
-            general_table = self._build_table_view(general_tabs, columns)
-            general_table.setToolTip(
-                f"Bands with fewer than 5 songs: {', '.join(sorted(bands_with_few))}"
-            )
-            self.tabs_widget.insertTab(1, general_table, "General")
+            t = self._build_table_view(general_tabs, columns)
+            t.setToolTip(f"Bands with fewer than 5 songs: {', '.join(sorted(bands_with_few))}")
+            self.tabs_widget.insertTab(1, t, "General")
 
     def _load_learned_tabs_view(self):
-        columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Learned Date", "Ultimate Guitar"]
+        # data: (id, band, album, title, tuning, rating, genre, notes, learned_date)
+        columns = [
+            "ID", "Band", "Album", "Title", "Tuning",
+            "Rating", "Genre", "Notes", "Learned Date", "Ultimate Guitar"
+        ]
         learned_tabs = self.db_manager.get_all_learned_tabs()
 
         if not learned_tabs:
-            empty_widget = QWidget()
-            empty_layout = QVBoxLayout(empty_widget)
-            empty_label = QLabel(
+            empty = QWidget()
+            lyt   = QVBoxLayout(empty)
+            lbl   = QLabel(
                 "No learned tabs yet.\n"
-                "Right-click on any tab in 'Tabs Collection' to mark it as learned."
+                "Right-click a tab in 'Tabs Collection' to mark it as learned."
             )
-            empty_label.setAlignment(Qt.AlignCenter)
-            empty_layout.addWidget(empty_label)
-            self.tabs_widget.addTab(empty_widget, "Learned")
+            lbl.setAlignment(Qt.AlignCenter)
+            lyt.addWidget(lbl)
+            self.tabs_widget.addTab(empty, "Learned")
             return
 
         self.tabs_widget.addTab(self._build_table_view(learned_tabs, columns), "All Learned")
 
-        band_learned_tabs = {}
-        for tab in learned_tabs:
-            band_learned_tabs.setdefault(tab[1], []).append(tab)
-
-        general_learned = []
+        band_map       = {}
+        general        = []
         bands_with_few = set()
 
-        for band_name, tabs in band_learned_tabs.items():
+        for tab in learned_tabs:
+            band_map.setdefault(tab[1], []).append(tab)
+
+        for band_name, tabs in band_map.items():
             if len(tabs) < 5:
-                general_learned.extend(tabs)
+                general.extend(tabs)
                 bands_with_few.add(band_name)
             else:
                 self.tabs_widget.addTab(self._build_table_view(tabs, columns), band_name)
 
-        if general_learned:
-            general_table = self._build_table_view(general_learned, columns)
-            general_table.setToolTip(
+        if general:
+            t = self._build_table_view(general, columns)
+            t.setToolTip(
                 f"Bands with fewer than 5 learned songs: {', '.join(sorted(bands_with_few))}"
             )
-            self.tabs_widget.insertTab(1, general_table, "General")
+            self.tabs_widget.insertTab(1, t, "General")
 
     # ------------------------------------------------------------------
-    # Ultimate Guitar button delegates
+    # Delegates setup  (UG button + inline star rating)
     # ------------------------------------------------------------------
-    def _setup_ug_delegates(self):
-        delegate = UltimateGuitarDelegate(self)
+    def _setup_delegates(self):
+        ug_delegate   = UltimateGuitarDelegate(self)
+        star_delegate = StarRatingDelegate(self)
+
         for i in range(self.tabs_widget.count()):
             table = self.tabs_widget.widget(i)
             if not isinstance(table, QTableView):
                 continue
+
             source_model = table.model().sourceModel()
-            # Connect signal (guard against duplicate connections)
             try:
                 source_model.searchTabRequested.disconnect(self.searchTabOnline)
             except TypeError:
                 pass
             source_model.searchTabRequested.connect(self.searchTabOnline)
+
+            # Ultimate Guitar button column
             try:
-                ug_col = source_model.columns.index("Ultimate Guitar")
-                table.setItemDelegateForColumn(ug_col, delegate)
-                table.setColumnWidth(ug_col, 100)
+                col = source_model.columns.index("Ultimate Guitar")
+                table.setItemDelegateForColumn(col, ug_delegate)
+                table.setColumnWidth(col, 100)
+            except ValueError:
+                pass
+
+            # Inline star rating column
+            try:
+                col = source_model.columns.index("Rating")
+                table.setItemDelegateForColumn(col, star_delegate)
             except ValueError:
                 pass
 
     def searchTabOnline(self, band, title):
         try:
             encoded = urllib.parse.quote(f"{band} {title}")
-            url = f"https://www.ultimate-guitar.com/search.php?search_type=title&value={encoded}"
-            webbrowser.open(url)
+            webbrowser.open(
+                f"https://www.ultimate-guitar.com/search.php?search_type=title&value={encoded}"
+            )
             self.statusBar().showMessage(f"Searching '{band} – {title}' on Ultimate Guitar…")
         except Exception as e:
-            traceback.print_exc()
             self.statusBar().showMessage(f"Error opening UG search: {e}")
 
     # ------------------------------------------------------------------
-    # Context menu  (single handler for both views)
+    # Context menu
     # ------------------------------------------------------------------
     def show_context_menu(self, position):
         try:
@@ -479,27 +576,30 @@ QPushButton:hover { background-color: #e3ac63; }
                 return
 
             index = current_tab.indexAt(position)
-            selection_model = current_tab.selectionModel()
+            sel   = current_tab.selectionModel()
+            if not sel.hasSelection() and index.isValid():
+                sel.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
 
-            if not selection_model.hasSelection() and index.isValid():
-                selection_model.select(
-                    index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows
-                )
-
-            selected_rows = selection_model.selectedRows()
-            if not selected_rows:
+            selected_rows = sel.selectedRows()
+            n = len(selected_rows)
+            if n == 0:
                 return
 
-            n = len(selected_rows)
             menu = QMenu()
 
             if self.current_view == "all":
-                learned_action = menu.addAction(f"Mark {n} as Learned" if n > 1 else "Mark as Learned")
+                learned_action = menu.addAction(
+                    f"Mark {n} as Learned" if n > 1 else "Mark as Learned"
+                )
             else:
-                remove_action = menu.addAction(f"Remove {n} from Learned" if n > 1 else "Remove from Learned")
+                remove_action = menu.addAction(
+                    f"Remove {n} from Learned" if n > 1 else "Remove from Learned"
+                )
 
-            edit_action = menu.addAction(f"Edit {n} Tab(s)" if n > 1 else "Edit Tab")
-            delete_action = menu.addAction(f"Delete {n} Tab(s)" if n > 1 else "Delete Tab")
+            menu.addSeparator()
+            edit_action       = menu.addAction("Edit Tab" if n == 1 else f"Edit {n} Tabs (one at a time)")
+            set_rating_action = menu.addAction(f"Set Rating for {n} Tabs" if n > 1 else "Set Rating")
+            delete_action     = menu.addAction(f"Delete {n} Tab(s)" if n > 1 else "Delete Tab")
 
             action = menu.exec_(current_tab.viewport().mapToGlobal(position))
             if action is None:
@@ -511,6 +611,8 @@ QPushButton:hover { background-color: #e3ac63; }
                 self.remove_from_learned(current_tab)
             elif action == edit_action:
                 self.edit_selected_tabs()
+            elif action == set_rating_action:
+                self.bulk_set_rating()
             elif action == delete_action:
                 self.delete_selected_tabs()
 
@@ -519,7 +621,7 @@ QPushButton:hover { background-color: #e3ac63; }
             self.statusBar().showMessage(f"Context menu error: {e}")
 
     # ------------------------------------------------------------------
-    # Edit
+    # Edit single tab  — FIXED Round 2: notes + learned date
     # ------------------------------------------------------------------
     def edit_selected_tabs(self):
         try:
@@ -529,41 +631,47 @@ QPushButton:hover { background-color: #e3ac63; }
 
             selected_rows = current_tab.selectionModel().selectedRows()
             if not selected_rows:
-                QMessageBox.warning(self, "Warning", "No tabs selected.")
+                QMessageBox.warning(self, "Warning", "No tab selected.")
                 return
             if len(selected_rows) > 1:
-                QMessageBox.warning(self, "Edit Tabs", "Please edit tabs one at a time.")
+                QMessageBox.warning(self, "Edit", "Please select only one tab to edit at a time.")
                 return
 
-            proxy_model = current_tab.model()
-            source_model = proxy_model.sourceModel()
-            source_row = proxy_model.mapToSource(selected_rows[0]).row()
-            row_data = source_model._data[source_row]
+            proxy      = current_tab.model()
+            source_row = proxy.mapToSource(selected_rows[0]).row()
+            row_data   = proxy.sourceModel()._data[source_row]
 
-            tab = {
-                'id':     row_data[0],
-                'band':   row_data[1],
-                'album':  row_data[2],
-                'title':  row_data[3],
-                'tuning': row_data[4],
-                'rating': int(row_data[5]),
-                'genre':  row_data[6],
-            }
+            # All tabs:    (id, band, album, title, tuning, rating, genre, notes)
+            # Learned tabs:(id, band, album, title, tuning, rating, genre, notes, learned_date)
+            notes        = row_data[7] if len(row_data) > 7 else ""
+            is_learned   = self.current_view == "learned"
+            learned_date = row_data[8] if (is_learned and len(row_data) > 8) else None
 
-            bands = [b[1] for b in self.db_manager.get_all_bands()]
-            dialog = AddTabDialog(bands, self)
-            dialog.band_combo.setCurrentText(tab['band'])
-            dialog.album.setText(tab['album'])
-            dialog.title.setText(tab['title'])
-            dialog.tuning.setCurrentText(tab['tuning'])
-            dialog.rating_stars.setRating(tab['rating'])
-            dialog.genre.setText(tab['genre'])
+            bands  = [b[1] for b in self.db_manager.get_all_bands()]
+            dialog = AddTabDialog(
+                bands, self,
+                show_learned_date=is_learned,
+                learned_date=learned_date
+            )
+            dialog.band_combo.setCurrentText(row_data[1])
+            dialog.album.setText(row_data[2])
+            dialog.title.setText(row_data[3])
+            dialog.tuning.setCurrentText(row_data[4])
+            dialog.rating_stars.setRating(int(row_data[5]))
+            dialog.genre.setText(row_data[6])
+            dialog.notes.setPlainText(notes)           # ← NEW: prefill notes
 
             if dialog.exec_() == QDialog.Accepted:
                 updated = dialog.getTabData()
                 if updated:
-                    self.db_manager.update_tab(tab['id'], updated)
-                    # preserve_tab=True keeps us on the current band tab
+                    self.db_manager.update_tab(row_data[0], updated)
+
+                    # ← NEW: save learned date if changed
+                    if is_learned and "learned_date" in updated:
+                        self.db_manager.update_learned_date(
+                            row_data[0], updated["learned_date"]
+                        )
+
                     self.load_data(preserve_tab=True)
                     self.statusBar().showMessage(
                         f"Updated: {updated['title']} by {updated['band']}"
@@ -574,69 +682,107 @@ QPushButton:hover { background-color: #e3ac63; }
             QMessageBox.critical(self, "Error", f"Failed to edit tab: {e}")
 
     # ------------------------------------------------------------------
+    # Bulk Set Rating
+    # ------------------------------------------------------------------
+    def bulk_set_rating(self):
+        try:
+            current_tab = self.tabs_widget.currentWidget()
+            if not isinstance(current_tab, QTableView):
+                return
+
+            selected_rows = current_tab.selectionModel().selectedRows()
+            if not selected_rows:
+                return
+
+            dialog = SetRatingDialog(self)
+            if dialog.exec_() != QDialog.Accepted:
+                return
+
+            new_rating   = dialog.getRating()
+            proxy        = current_tab.model()
+            source_model = proxy.sourceModel()
+            updated      = 0
+
+            for proxy_index in selected_rows:
+                source_row = proxy.mapToSource(proxy_index).row()
+                tab_id     = source_model._data[source_row][0]
+                try:
+                    self.db_manager.update_rating(tab_id, new_rating)
+                    updated += 1
+                except Exception as e:
+                    print(f"Error updating rating for tab {tab_id}: {e}")
+
+            self.load_data(preserve_tab=True)
+            stars = "★" * new_rating + "☆" * (5 - new_rating)
+            self.statusBar().showMessage(f"Rating set to {stars} for {updated} tab(s)")
+
+        except Exception as e:
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to set rating: {e}")
+
+    # ------------------------------------------------------------------
     # Learned helpers
     # ------------------------------------------------------------------
     def add_tab_to_learned(self, table_view, index=None):
-        selection_model = table_view.selectionModel()
-        indices = selection_model.selectedRows()
+        sel     = table_view.selectionModel()
+        indices = sel.selectedRows() or ([index] if (index and index.isValid()) else [])
         if not indices:
-            if index and index.isValid():
-                indices = [index]
-            else:
-                return
+            return
 
-        added = 0
-        already = 0
+        added = already = 0
         tab_title = ""
 
         for idx in indices:
-            proxy_model = table_view.model()
-            source_model = proxy_model.sourceModel()
-            source_row = proxy_model.mapToSource(idx).row()
+            proxy        = table_view.model()
+            source_model = proxy.sourceModel()
+            source_row   = proxy.mapToSource(idx).row()
             if len(indices) == 1:
                 tab_title = source_model._data[source_row][3]
-            tab_id = source_model._data[source_row][0]
             try:
-                if self.db_manager.add_to_learned(tab_id):
+                if self.db_manager.add_to_learned(source_model._data[source_row][0]):
                     added += 1
                 else:
                     already += 1
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to mark tab as learned: {e}")
+                QMessageBox.critical(self, "Error", f"Failed to mark as learned: {e}")
 
-        if len(indices) == 1:
-            msg = f"'{tab_title}' marked as learned" if added else f"'{tab_title}' already marked as learned"
-        else:
-            msg = f"{added} tabs marked as learned, {already} already learned"
+        msg = (
+            (f"'{tab_title}' marked as learned" if added else f"'{tab_title}' already learned")
+            if len(indices) == 1 else
+            f"{added} marked as learned, {already} already learned"
+        )
         self.statusBar().showMessage(msg)
 
         if self.current_view == "learned":
             self.load_data(preserve_tab=True)
 
     def remove_from_learned(self, table_view, index=None):
-        indices = [index] if (index and index.isValid()) else table_view.selectionModel().selectedRows()
+        indices = (
+            [index] if (index and index.isValid())
+            else table_view.selectionModel().selectedRows()
+        )
         if not indices:
             return
 
-        proxy_model = table_view.model()
-        source_model = proxy_model.sourceModel()
-        removed = 0
-        last_title = ""
+        proxy        = table_view.model()
+        source_model = proxy.sourceModel()
+        removed      = 0
+        last_title   = ""
 
         for idx in indices:
-            source_row = proxy_model.mapToSource(idx).row()
+            source_row = proxy.mapToSource(idx).row()
             last_title = source_model._data[source_row][3]
-            tab_id = source_model._data[source_row][0]
             try:
-                self.db_manager.remove_from_learned(tab_id)
+                self.db_manager.remove_from_learned(source_model._data[source_row][0])
                 removed += 1
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to remove from learned: {e}")
 
         self.load_data(preserve_tab=True)
-
-        msg = (f"'{last_title}' removed from learned" if len(indices) == 1
-               else f"{removed} tabs removed from learned")
+        msg = (
+            f"'{last_title}' removed from learned" if len(indices) == 1
+            else f"{removed} tabs removed from learned"
+        )
         self.statusBar().showMessage(msg)
 
     # ------------------------------------------------------------------
@@ -648,31 +794,26 @@ QPushButton:hover { background-color: #e3ac63; }
             if not isinstance(current_tab, QTableView):
                 return
 
-            selection_model = current_tab.selectionModel()
-            selected_rows = selection_model.selectedRows()
+            selected_rows = current_tab.selectionModel().selectedRows()
             if not selected_rows:
                 QMessageBox.warning(self, "Warning", "No tabs selected.")
                 return
 
             if QMessageBox.question(
-                self,
-                "Confirm Deletion",
+                self, "Confirm Deletion",
                 f"Delete {len(selected_rows)} selected tab(s)?",
-                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes | QMessageBox.No
             ) != QMessageBox.Yes:
                 return
 
-            proxy_model = current_tab.model()
-            source_model = proxy_model.sourceModel()
+            proxy        = current_tab.model()
+            source_model = proxy.sourceModel()
+            tab_ids      = []
 
-            tab_ids = []
-            for proxy_index in sorted(selected_rows, key=lambda x: x.row(), reverse=True):
-                source_index = proxy_model.mapToSource(proxy_index)
-                if not source_index.isValid():
-                    continue
-                source_row = source_index.row()
-                if 0 <= source_row < len(source_model._data):
-                    tab_ids.append(source_model._data[source_row][0])
+            for pi in sorted(selected_rows, key=lambda x: x.row(), reverse=True):
+                si = proxy.mapToSource(pi)
+                if si.isValid() and 0 <= si.row() < len(source_model._data):
+                    tab_ids.append(source_model._data[si.row()][0])
 
             deleted = 0
             for tab_id in tab_ids:
@@ -689,7 +830,6 @@ QPushButton:hover { background-color: #e3ac63; }
                 print(f"Error cleaning up bands: {e}")
 
             self.load_data(preserve_tab=True)
-
             msg = f"{deleted} tab(s) deleted"
             if empty_bands:
                 msg += f", {empty_bands} empty band(s) removed"
@@ -703,18 +843,19 @@ QPushButton:hover { background-color: #e3ac63; }
     # Add dialogs
     # ------------------------------------------------------------------
     def show_add_dialog(self):
-        bands = [b[1] for b in self.db_manager.get_all_bands()]
+        bands  = [b[1] for b in self.db_manager.get_all_bands()]
         dialog = AddTabDialog(bands, self)
 
         if dialog.exec_() == QDialog.Accepted:
             tab_data = dialog.getTabData()
             if tab_data:
                 try:
-                    if self.db_manager.tab_exists(tab_data["band"], tab_data["album"], tab_data["title"]):
+                    if self.db_manager.tab_exists(
+                        tab_data["band"], tab_data["album"], tab_data["title"]
+                    ):
                         QMessageBox.warning(
-                            self, "Duplicate Tab",
-                            f"'{tab_data['title']}' by '{tab_data['band']}' "
-                            f"(album: '{tab_data['album']}') already exists."
+                            self, "Duplicate",
+                            f"'{tab_data['title']}' by '{tab_data['band']}' already exists."
                         )
                         return
                     self.db_manager.add_tab(tab_data)
@@ -723,12 +864,12 @@ QPushButton:hover { background-color: #e3ac63; }
                         f"Added: {tab_data['title']} by {tab_data['band']}"
                     )
                 except ValueError as ve:
-                    QMessageBox.warning(self, "Duplicate Tab", str(ve))
+                    QMessageBox.warning(self, "Duplicate", str(ve))
                 except Exception as e:
                     QMessageBox.critical(self, "Error", f"Failed to add tab: {e}")
 
     def show_batch_add_dialog(self):
-        bands = [b[1] for b in self.db_manager.get_all_bands()]
+        bands  = [b[1] for b in self.db_manager.get_all_bands()]
         dialog = BatchAddDialog(bands, self)
 
         if dialog.exec_() == QDialog.Accepted:
@@ -747,14 +888,12 @@ QPushButton:hover { background-color: #e3ac63; }
                         duplicate += 1
                     except Exception as e:
                         error += 1
-                        print(f"Error adding tab {tab.get('title', '?')}: {e}")
+                        print(f"Error adding tab: {e}")
 
                 self.load_data(preserve_tab=True)
                 msg = f"Added {success} tab(s)"
-                if duplicate:
-                    msg += f", {duplicate} duplicate(s) skipped"
-                if error:
-                    msg += f", {error} error(s)"
+                if duplicate: msg += f", {duplicate} duplicate(s) skipped"
+                if error:     msg += f", {error} error(s)"
                 self.statusBar().showMessage(msg)
 
             except Exception as e:
@@ -779,14 +918,15 @@ QPushButton:hover { background-color: #e3ac63; }
 
                 for row in reader:
                     try:
-                        band = row.get("band", "").strip()
+                        band  = row.get("band",  "").strip()
                         title = row.get("title", "").strip()
                         if not band or not title:
                             continue
 
-                        album = row.get("album", "").strip()
+                        album  = row.get("album", "").strip()
                         tuning = row.get("Tuning", row.get("tuning", "")).strip()
-                        genre = (row.get("genre") or row.get("genrge", "")).strip()
+                        genre  = (row.get("genre") or row.get("genrge", "")).strip()
+                        notes  = (row.get("notes") or row.get("Notes", "")).strip()
 
                         try:
                             rating = int(float(row.get("rating") or 1))
@@ -797,10 +937,11 @@ QPushButton:hover { background-color: #e3ac63; }
                             duplicate += 1
                             continue
 
-                        self.db_manager.add_tab(
-                            {"band": band, "album": album, "title": title,
-                             "tuning": tuning, "rating": rating, "genre": genre}
-                        )
+                        self.db_manager.add_tab({
+                            "band": band, "album": album, "title": title,
+                            "tuning": tuning, "rating": rating,
+                            "genre": genre, "notes": notes
+                        })
                         success += 1
 
                     except ValueError:
@@ -811,15 +952,161 @@ QPushButton:hover { background-color: #e3ac63; }
 
             self.load_data(preserve_tab=True)
             msg = f"Imported {success} tab(s)"
-            if duplicate:
-                msg += f", {duplicate} duplicate(s) skipped"
-            if error:
-                msg += f", {error} error(s)"
+            if duplicate: msg += f", {duplicate} duplicate(s) skipped"
+            if error:     msg += f", {error} error(s)"
             self.statusBar().showMessage(msg)
 
         except Exception as e:
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Failed to import CSV: {e}")
+
+    # ------------------------------------------------------------------
+    # Export CSV  — FIXED Round 2: includes Notes column
+    # ------------------------------------------------------------------
+    def export_to_csv(self):
+        if self.current_view == "all":
+            data         = self.db_manager.get_all_tabs()
+            headers      = ["Band", "Album", "Title", "Tuning", "Rating", "Genre", "Notes"]
+            default_name = "guitar_tabs_export.csv"
+        else:
+            data         = self.db_manager.get_all_learned_tabs()
+            headers      = ["Band", "Album", "Title", "Tuning", "Rating", "Genre", "Notes", "Learned Date"]
+            default_name = "guitar_tabs_learned_export.csv"
+
+        if not data:
+            QMessageBox.information(self, "Export", "No data to export.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export CSV", default_name, "CSV Files (*.csv);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                for row in data:
+                    writer.writerow(row[1:])  # skip ID
+
+            self.statusBar().showMessage(
+                f"Exported {len(data)} tab(s) to {os.path.basename(file_path)}"
+            )
+        except Exception as e:
+            traceback.print_exc()
+            QMessageBox.critical(self, "Export Failed", f"Failed to export: {e}")
+
+    # ------------------------------------------------------------------
+    # Export HTML  ← NEW Round 2
+    # ------------------------------------------------------------------
+    def export_to_html(self):
+        if self.current_view == "all":
+            data         = self.db_manager.get_all_tabs()
+            title        = "Guitar Tabs Collection"
+            headers      = ["Band", "Album", "Title", "Tuning", "Rating", "Genre", "Notes"]
+            default_name = "guitar_tabs_export.html"
+        else:
+            data         = self.db_manager.get_all_learned_tabs()
+            title        = "Learned Guitar Tabs"
+            headers      = ["Band", "Album", "Title", "Tuning", "Rating", "Genre", "Notes", "Learned Date"]
+            default_name = "guitar_tabs_learned_export.html"
+
+        if not data:
+            QMessageBox.information(self, "Export", "No data to export.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export HTML", default_name, "HTML Files (*.html);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        try:
+            rows_html = ""
+            for row in data:
+                cols = row[1:]  # skip ID
+                cells = ""
+                for i, val in enumerate(cols):
+                    # Rating column (index 4 in cols = index 5 in row)
+                    if i == 4:
+                        try:
+                            r = int(val)
+                        except (ValueError, TypeError):
+                            r = 0
+                        cells += f'<td class="rating">{"★" * r}{"☆" * (5 - r)}</td>'
+                    else:
+                        safe = str(val).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") if val else ""
+                        cells += f"<td>{safe}</td>"
+                rows_html += f"<tr>{cells}</tr>\n"
+
+            header_cells = "".join(f"<th>{h}</th>" for h in headers)
+            exported_at  = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+            html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{title}</title>
+  <style>
+    body      {{ font-family: Arial, sans-serif; margin: 30px; color: #222; background: #fff; }}
+    h1        {{ color: #e3ac63; border-bottom: 2px solid #e3ac63; padding-bottom: 6px; }}
+    p.meta    {{ color: #666; font-size: 13px; margin-top: 0; }}
+    table     {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
+    th        {{ background: #3a3a3a; color: #e3ac63; padding: 9px 14px;
+                 text-align: left; font-size: 13px; }}
+    td        {{ padding: 7px 14px; border-bottom: 1px solid #e0e0e0;
+                 font-size: 13px; vertical-align: top; }}
+    tr:nth-child(even) {{ background: #fafafa; }}
+    tr:hover  {{ background: #fff8ec; }}
+    .rating   {{ color: #FFD700; font-size: 15px; white-space: nowrap; }}
+    @media print {{
+      body {{ margin: 10px; }}
+      tr:hover {{ background: none; }}
+    }}
+  </style>
+</head>
+<body>
+  <h1>{title}</h1>
+  <p class="meta">Exported: {exported_at} &nbsp;|&nbsp; {len(data)} tab(s)</p>
+  <table>
+    <thead><tr>{header_cells}</tr></thead>
+    <tbody>
+{rows_html}    </tbody>
+  </table>
+</body>
+</html>"""
+
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(html)
+
+            self.statusBar().showMessage(
+                f"✓ Exported {len(data)} tab(s) → {os.path.basename(file_path)}"
+            )
+            # Open in browser immediately
+            webbrowser.open(f"file:///{os.path.abspath(file_path)}")
+
+        except Exception as e:
+            traceback.print_exc()
+            QMessageBox.critical(self, "Export Failed", f"Failed to export HTML: {e}")
+
+    # ------------------------------------------------------------------
+    # Database Backup
+    # ------------------------------------------------------------------
+    def backup_database(self):
+        try:
+            timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_name = f"guitar_tabs_backup_{timestamp}.db"
+            backup_path = os.path.join(os.path.dirname(self.db_path), backup_name)
+            shutil.copy2(self.db_path, backup_path)
+            self.statusBar().showMessage(f"✓ Backup saved: {backup_name}")
+            QMessageBox.information(
+                self, "Backup Successful",
+                f"Database backed up to:\n{backup_path}"
+            )
+        except Exception as e:
+            traceback.print_exc()
+            QMessageBox.critical(self, "Backup Failed", f"Failed to backup database:\n{e}")
 
     # ------------------------------------------------------------------
     # Filters
@@ -830,7 +1117,6 @@ QPushButton:hover { background-color: #e3ac63; }
         current_tab = self.tabs_widget.currentWidget()
         if not isinstance(current_tab, QTableView):
             return
-
         proxy = current_tab.model()
         if not isinstance(proxy, CustomProxyModel):
             return
@@ -844,7 +1130,7 @@ QPushButton:hover { background-color: #e3ac63; }
         proxy.setFilterFixedString(self.filter_text.text())
 
     def show_advanced_filter(self):
-        bands = [b[1] for b in self.db_manager.get_all_bands()]
+        bands  = [b[1] for b in self.db_manager.get_all_bands()]
         dialog = AdvancedFilterDialog(bands, self)
         if dialog.exec_() == QDialog.Accepted:
             current_tab = self.tabs_widget.currentWidget()
@@ -861,8 +1147,8 @@ QPushButton:hover { background-color: #e3ac63; }
         if index < 0:
             return
         tab_name = self.tabs_widget.tabText(index)
-        count = 0
-        widget = self.tabs_widget.widget(index)
+        count    = 0
+        widget   = self.tabs_widget.widget(index)
         if isinstance(widget, QTableView) and isinstance(widget.model(), QSortFilterProxyModel):
             count = widget.model().rowCount()
         self.statusBar().showMessage(f"{tab_name}: {count} tab(s)")
@@ -871,11 +1157,10 @@ QPushButton:hover { background-color: #e3ac63; }
     # Pitch Shifter
     # ------------------------------------------------------------------
     def show_pitch_shifter(self):
-        dialog = PitchShifterDialog(self.db_manager, self)
-        dialog.exec_()
+        PitchShifterDialog(self.db_manager, self).exec_()
 
     # ------------------------------------------------------------------
-    # Custom title bar  (drag logic lives here, NOT on main window)
+    # Custom title bar
     # ------------------------------------------------------------------
     def setupCustomTitleBar(self):
         self.setWindowFlags(Qt.FramelessWindowHint)
@@ -884,19 +1169,24 @@ QPushButton:hover { background-color: #e3ac63; }
         title_bar.setFixedHeight(40)
         title_bar.setStyleSheet("background-color: #3a3a3a;")
 
-        layout = QHBoxLayout(title_bar)
-        layout.setContentsMargins(10, 0, 10, 0)
-        layout.setSpacing(5)
+        lyt = QHBoxLayout(title_bar)
+        lyt.setContentsMargins(10, 0, 10, 0)
+        lyt.setSpacing(5)
 
         title_label = QLabel("Guitar Tabs Collection Manager")
         title_label.setStyleSheet("color: white; font-weight: bold;")
-        layout.addWidget(title_label)
-        layout.addStretch()
+        lyt.addWidget(title_label)
+        lyt.addStretch()
 
         btn_style = """
 QPushButton {
-    background-color: transparent; color: white; border: none;
-    font-size: 16px; font-family: Arial; padding: 0; margin: 0;
+    background-color: transparent;
+    color: white;
+    border: none;
+    font-size: 16px;
+    font-family: Arial;
+    padding: 0;
+    margin: 0;
 }
 QPushButton:hover { background-color: #555555; }
 """
@@ -915,15 +1205,13 @@ QPushButton:hover { background-color: #555555; }
         close_btn.setStyleSheet(btn_style + "QPushButton:hover { background-color: #E81123; }")
         close_btn.clicked.connect(self.close)
 
-        layout.addWidget(min_btn)
-        layout.addWidget(max_btn)
-        layout.addWidget(close_btn)
+        for b in (min_btn, max_btn, close_btn):
+            lyt.addWidget(b)
 
         self.centralWidget().layout().insertWidget(0, title_bar)
 
-        # Title bar drag — only the title bar moves the window
-        title_bar.mousePressEvent = self._tb_mouse_press
-        title_bar.mouseMoveEvent = self._tb_mouse_move
+        title_bar.mousePressEvent   = self._tb_mouse_press
+        title_bar.mouseMoveEvent    = self._tb_mouse_move
         title_bar.mouseReleaseEvent = self._tb_mouse_release
 
     def toggleMaximized(self):
@@ -932,13 +1220,10 @@ QPushButton:hover { background-color: #555555; }
     def _tb_mouse_press(self, event):
         if event.button() == Qt.LeftButton:
             self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
-            event.accept()
 
     def _tb_mouse_move(self, event):
         if event.buttons() == Qt.LeftButton and self.drag_position is not None:
             self.move(event.globalPos() - self.drag_position)
-            event.accept()
 
     def _tb_mouse_release(self, event):
         self.drag_position = None
-        event.accept()
