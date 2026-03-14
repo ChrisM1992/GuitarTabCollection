@@ -1,4 +1,5 @@
 import os
+import sys
 import csv
 import shutil
 import traceback
@@ -259,7 +260,13 @@ class GuitarTabApp(QMainWindow):
         self.setMinimumSize(1400, 800)
         self.drag_position = None
 
-        app_dir = os.path.dirname(os.path.abspath(__file__))
+        # When frozen by PyInstaller, __file__ points into the temp _MEIPASS
+        # folder which is deleted on exit. Use sys.executable so the database
+        # is stored next to the .exe and persists between launches.
+        if getattr(sys, 'frozen', False):
+            app_dir = os.path.dirname(sys.executable)
+        else:
+            app_dir = os.path.dirname(os.path.abspath(__file__))
         self.db_path    = os.path.join(app_dir, "guitar_tabs.db")
         self.db_manager = DatabaseManager(self.db_path)
 
