@@ -337,6 +337,32 @@ class DatabaseManager:
             conn.close()
 
     # ------------------------------------------------------------------
+    def get_tab_id(self, band, album, title):
+        """Return the tab id for a given band/album/title, or None if not found."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT t.id FROM tabs t
+            JOIN bands b ON t.band_id = b.id
+            WHERE b.name = ? AND t.album = ? AND t.title = ?
+        ''', (band, album, title))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+
+    def is_learned(self, tab_id):
+        """Return True if the tab is already in the learned_tabs table."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM learned_tabs WHERE tab_id = ?", (tab_id,))
+        result = cursor.fetchone() is not None
+        conn.close()
+        return result
+
+    def mark_as_learned(self, tab_id):
+        """Alias for add_to_learned used by the import logic."""
+        return self.add_to_learned(tab_id)
+
     # Learned tabs
     # ------------------------------------------------------------------
     def add_to_learned(self, tab_id):

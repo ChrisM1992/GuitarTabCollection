@@ -11,7 +11,7 @@ class PitchShifterDialog(QDialog):
     
     def __init__(self, db_manager, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Guitar Pitch Shifter")
+        self.setWindowTitle("Pitch Calculator")
         self.setMinimumSize(650, 500)
         self.db_manager = db_manager
         

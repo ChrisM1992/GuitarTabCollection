@@ -1,6 +1,8 @@
 import os
 import sys
 import csv
+import io
+import zipfile
 import shutil
 import traceback
 import webbrowser
@@ -13,7 +15,7 @@ from PyQt5.QtWidgets import (
     QMessageBox, QFileDialog, QDialog, QFormLayout, QDialogButtonBox,
     QMenu, QSizePolicy, QStyledItemDelegate, QShortcut
 )
-from PyQt5.QtCore import Qt, QSortFilterProxyModel, QItemSelectionModel, QEvent
+from PyQt5.QtCore import Qt, QSortFilterProxyModel, QItemSelectionModel, QEvent, QPoint
 from PyQt5.QtGui import QColor, QKeySequence, QFont
 
 from tabs_data_model import TabsDataModel
@@ -303,7 +305,7 @@ class GuitarTabApp(QMainWindow):
         self.learned_tabs_btn.clicked.connect(lambda: self.switch_mode("learned"))
         mode_layout.addWidget(self.learned_tabs_btn)
 
-        self.pitch_shifter_btn = QPushButton("Pitch Shifter")
+        self.pitch_shifter_btn = QPushButton("Pitch Calculator")
         self.pitch_shifter_btn.clicked.connect(self.show_pitch_shifter)
         mode_layout.addWidget(self.pitch_shifter_btn)
 
@@ -329,10 +331,8 @@ QPushButton:checked {
         for label, slot in [
             ("Add New Tab",  self.show_add_dialog),
             ("Add Multiple", self.show_batch_add_dialog),
-            ("Import CSV",   self.import_from_csv),
-            ("Export CSV",   self.export_to_csv),
-            ("Export HTML",  self.export_to_html),      # ← NEW Round 2
-            ("Backup DB",    self.backup_database),
+            ("Import",       self.show_import_menu),
+            ("Export",       self.show_export_menu),
         ]:
             btn = QPushButton(label)
             btn.clicked.connect(slot)
@@ -911,213 +911,250 @@ QPushButton:checked {
                 QMessageBox.critical(self, "Error", f"Failed to add tabs: {e}")
 
     # ------------------------------------------------------------------
-    # CSV Import
+    # Import / Export menus
+    # ------------------------------------------------------------------
+    def show_import_menu(self):
+        menu = QMenu(self)
+        menu.addAction("Import CSV", self.import_from_csv)
+        menu.addAction("Import DB",  self.import_database)
+        btn = self.sender()
+        menu.exec_(btn.mapToGlobal(QPoint(0, btn.height())))
+
+    def show_export_menu(self):
+        menu = QMenu(self)
+        menu.addAction("Export CSV", self.export_to_csv)
+        menu.addAction("Export DB",  self.backup_database)
+        btn = self.sender()
+        menu.exec_(btn.mapToGlobal(QPoint(0, btn.height())))
+
+    # ------------------------------------------------------------------
+    # Import CSV  (single .csv or .zip bundle)
     # ------------------------------------------------------------------
     def import_from_csv(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Import CSV", "", "CSV Files (*.csv);;All Files (*)"
+            self, "Import", "",
+            "Supported Files (*.zip *.csv);;ZIP Bundle (*.zip);;CSV File (*.csv);;All Files (*)"
         )
         if not file_path:
             return
-
-        try:
-            success = duplicate = error = 0
-
-            with open(file_path, "r", encoding="utf-8-sig") as f:
-                reader = csv.DictReader(f)
-                print(f"CSV columns: {reader.fieldnames}")
-
-                for row in reader:
-                    try:
-                        band  = row.get("band",  "").strip()
-                        title = row.get("title", "").strip()
-                        if not band or not title:
-                            continue
-
-                        album  = row.get("album", "").strip()
-                        tuning = row.get("Tuning", row.get("tuning", "")).strip()
-                        genre  = (row.get("genre") or row.get("genrge", "")).strip()
-                        notes  = (row.get("notes") or row.get("Notes", "")).strip()
-
-                        try:
-                            rating = int(float(row.get("rating") or 1))
-                        except (ValueError, TypeError):
-                            rating = 1
-
-                        if self.db_manager.tab_exists(band, album, title):
-                            duplicate += 1
-                            continue
-
-                        self.db_manager.add_tab({
-                            "band": band, "album": album, "title": title,
-                            "tuning": tuning, "rating": rating,
-                            "genre": genre, "notes": notes
-                        })
-                        success += 1
-
-                    except ValueError:
-                        duplicate += 1
-                    except Exception as e:
-                        print(f"Row error: {e}")
-                        error += 1
-
+        if file_path.lower().endswith(".zip"):
+            self._import_zip(file_path)
+        else:
+            success, duplicate, error = self._import_tabs_csv(file_path)
             self.load_data(preserve_tab=True)
             msg = f"Imported {success} tab(s)"
             if duplicate: msg += f", {duplicate} duplicate(s) skipped"
             if error:     msg += f", {error} error(s)"
             self.statusBar().showMessage(msg)
 
+    def _import_tabs_csv(self, file_path_or_text, is_text=False):
+        """Import tabs from a CSV file path or raw text. Returns (success, duplicate, error)."""
+        success = duplicate = error = 0
+        f_handle = None
+        try:
+            if is_text:
+                reader = csv.DictReader(io.StringIO(file_path_or_text))
+            else:
+                f_handle = open(file_path_or_text, "r", encoding="utf-8-sig")
+                reader = csv.DictReader(f_handle)
+            for row in reader:
+                try:
+                    row = {k.lower().strip(): v for k, v in row.items()}
+                    band  = row.get("band",  "").strip()
+                    title = row.get("title", "").strip()
+                    if not band or not title:
+                        continue
+                    album  = row.get("album",  "").strip()
+                    tuning = row.get("tuning", "").strip()
+                    genre  = row.get("genre",  "").strip()
+                    notes  = row.get("notes",  "").strip()
+                    try:
+                        rating = int(float(row.get("rating") or 1))
+                    except (ValueError, TypeError):
+                        rating = 1
+                    if self.db_manager.tab_exists(band, album, title):
+                        duplicate += 1
+                        continue
+                    self.db_manager.add_tab({
+                        "band": band, "album": album, "title": title,
+                        "tuning": tuning, "rating": rating,
+                        "genre": genre, "notes": notes
+                    })
+                    success += 1
+                except ValueError:
+                    duplicate += 1
+                except Exception as e:
+                    print(f"Row error: {e}")
+                    error += 1
         except Exception as e:
             traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to import CSV: {e}")
+            QMessageBox.critical(self, "Import Error", str(e))
+        finally:
+            if f_handle:
+                f_handle.close()
+        return success, duplicate, error
+
+    def _import_tunings_csv(self, text):
+        added = 0
+        try:
+            for row in csv.DictReader(io.StringIO(text)):
+                row = {k.lower().strip(): v for k, v in row.items()}
+                name = row.get("tuning", "").strip()
+                if not name:
+                    continue
+                try:
+                    is_seven = bool(int(row.get("is_seven_string", 0)))
+                except (ValueError, TypeError):
+                    is_seven = False
+                try:
+                    self.db_manager.add_tuning(name, is_seven)
+                    added += 1
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"Tunings import error: {e}")
+        return added
+
+    def _import_learned_csv(self, text):
+        marked = 0
+        try:
+            for row in csv.DictReader(io.StringIO(text)):
+                row = {k.lower().strip(): v for k, v in row.items()}
+                band  = row.get("band",  "").strip()
+                title = row.get("title", "").strip()
+                album = row.get("album", "").strip()
+                learned_date = row.get("learned date", "").strip()
+                if not band or not title:
+                    continue
+                tab_id = self.db_manager.get_tab_id(band, album, title)
+                if tab_id and not self.db_manager.is_learned(tab_id):
+                    self.db_manager.mark_as_learned(tab_id)
+                    if learned_date:
+                        self.db_manager.update_learned_date(tab_id, learned_date)
+                    marked += 1
+        except Exception as e:
+            print(f"Learned import error: {e}")
+        return marked
+
+    def _import_zip(self, zip_path):
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                names = zf.namelist()
+                tabs_ok = dup = err = tunings_added = learned_marked = 0
+                if "tabs.csv" in names:
+                    text = zf.read("tabs.csv").decode("utf-8-sig")
+                    tabs_ok, dup, err = self._import_tabs_csv(text, is_text=True)
+                if "tunings.csv" in names:
+                    text = zf.read("tunings.csv").decode("utf-8-sig")
+                    tunings_added = self._import_tunings_csv(text)
+                if "learned_tabs.csv" in names:
+                    text = zf.read("learned_tabs.csv").decode("utf-8-sig")
+                    learned_marked = self._import_learned_csv(text)
+            self.load_data(preserve_tab=True)
+            parts = [f"{tabs_ok} tab(s) imported"]
+            if dup:            parts.append(f"{dup} duplicate(s) skipped")
+            if err:            parts.append(f"{err} error(s)")
+            if tunings_added:  parts.append(f"{tunings_added} tuning(s) added")
+            if learned_marked: parts.append(f"{learned_marked} tab(s) marked learned")
+            self.statusBar().showMessage(", ".join(parts))
+        except Exception as e:
+            traceback.print_exc()
+            QMessageBox.critical(self, "Import Failed", str(e))
 
     # ------------------------------------------------------------------
-    # Export CSV  — FIXED Round 2: includes Notes column
+    # Import DB
+    # ------------------------------------------------------------------
+    def import_database(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Import Database", "", "SQLite Database (*.db);;All Files (*)"
+        )
+        if not file_path:
+            return
+        reply = QMessageBox.warning(
+            self, "Replace Database",
+            "This will replace your current database with the selected file.\n"
+            "All current data will be overwritten.\n\nAre you sure?",
+            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            shutil.copy2(file_path, self.db_path)
+            self.db_manager = DatabaseManager(self.db_path)
+            self.load_data()
+            self.statusBar().showMessage("Database imported successfully")
+        except Exception as e:
+            traceback.print_exc()
+            QMessageBox.critical(self, "Import Failed", str(e))
+
+    # ------------------------------------------------------------------
+    # Export CSV — exports everything as a ZIP (tabs + learned + tunings)
     # ------------------------------------------------------------------
     def export_to_csv(self):
-        if self.current_view == "all":
-            data         = self.db_manager.get_all_tabs()
-            headers      = ["band", "album", "title", "tuning", "rating", "genre", "notes"]
-            default_name = "guitar_tabs_export.csv"
-        else:
-            data         = self.db_manager.get_all_learned_tabs()
-            headers      = ["band", "album", "title", "tuning", "rating", "genre", "notes", "learned date"]
-            default_name = "guitar_tabs_learned_export.csv"
-
-        if not data:
-            QMessageBox.information(self, "Export", "No data to export.")
-            return
-
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Export CSV", default_name, "CSV Files (*.csv);;All Files (*)"
+            self, "Export CSV", "guitar_tabs_export.zip",
+            "ZIP Bundle (*.zip);;All Files (*)"
         )
         if not file_path:
             return
-
         try:
-            with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
-                writer = csv.writer(f)
-                writer.writerow(headers)
-                for row in data:
-                    writer.writerow(row[1:])  # skip ID
+            tabs_data    = self.db_manager.get_all_tabs()
+            learned_data = self.db_manager.get_all_learned_tabs()
+            tunings_6    = self.db_manager.get_all_tunings(seven_string=False)
+            tunings_7    = self.db_manager.get_all_tunings(seven_string=True)
+
+            with zipfile.ZipFile(file_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                # tabs.csv
+                buf = io.StringIO()
+                w = csv.writer(buf)
+                w.writerow(["band", "album", "title", "tuning", "rating", "genre", "notes"])
+                for row in tabs_data:
+                    w.writerow(row[1:])
+                zf.writestr("tabs.csv", buf.getvalue())
+
+                # learned_tabs.csv
+                buf = io.StringIO()
+                w = csv.writer(buf)
+                w.writerow(["band", "album", "title", "tuning", "rating", "genre", "notes", "learned date"])
+                for row in learned_data:
+                    w.writerow(row[1:])
+                zf.writestr("learned_tabs.csv", buf.getvalue())
+
+                # tunings.csv
+                buf = io.StringIO()
+                w = csv.writer(buf)
+                w.writerow(["tuning", "is_seven_string"])
+                for t in tunings_6:
+                    w.writerow([t, 0])
+                for t in tunings_7:
+                    w.writerow([t, 1])
+                zf.writestr("tunings.csv", buf.getvalue())
 
             self.statusBar().showMessage(
-                f"Exported {len(data)} tab(s) to {os.path.basename(file_path)}"
+                f"Exported {len(tabs_data)} tab(s) to {os.path.basename(file_path)}"
             )
         except Exception as e:
             traceback.print_exc()
-            QMessageBox.critical(self, "Export Failed", f"Failed to export: {e}")
+            QMessageBox.critical(self, "Export Failed", str(e))
 
     # ------------------------------------------------------------------
-    # Export HTML  ← NEW Round 2
-    # ------------------------------------------------------------------
-    def export_to_html(self):
-        if self.current_view == "all":
-            data         = self.db_manager.get_all_tabs()
-            title        = "Guitar Tabs Collection"
-            headers      = ["Band", "Album", "Title", "Tuning", "Rating", "Genre", "Notes"]
-            default_name = "guitar_tabs_export.html"
-        else:
-            data         = self.db_manager.get_all_learned_tabs()
-            title        = "Learned Guitar Tabs"
-            headers      = ["Band", "Album", "Title", "Tuning", "Rating", "Genre", "Notes", "Learned Date"]
-            default_name = "guitar_tabs_learned_export.html"
-
-        if not data:
-            QMessageBox.information(self, "Export", "No data to export.")
-            return
-
-        file_path, _ = QFileDialog.getSaveFileName(
-            self, "Export HTML", default_name, "HTML Files (*.html);;All Files (*)"
-        )
-        if not file_path:
-            return
-
-        try:
-            rows_html = ""
-            for row in data:
-                cols = row[1:]  # skip ID
-                cells = ""
-                for i, val in enumerate(cols):
-                    # Rating column (index 4 in cols = index 5 in row)
-                    if i == 4:
-                        try:
-                            r = int(val)
-                        except (ValueError, TypeError):
-                            r = 0
-                        cells += f'<td class="rating">{"★" * r}{"☆" * (5 - r)}</td>'
-                    else:
-                        safe = str(val).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") if val else ""
-                        cells += f"<td>{safe}</td>"
-                rows_html += f"<tr>{cells}</tr>\n"
-
-            header_cells = "".join(f"<th>{h}</th>" for h in headers)
-            exported_at  = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-            html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>{title}</title>
-  <style>
-    body      {{ font-family: Arial, sans-serif; margin: 30px; color: #222; background: #fff; }}
-    h1        {{ color: #e3ac63; border-bottom: 2px solid #e3ac63; padding-bottom: 6px; }}
-    p.meta    {{ color: #666; font-size: 13px; margin-top: 0; }}
-    table     {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
-    th        {{ background: #3a3a3a; color: #e3ac63; padding: 9px 14px;
-                 text-align: left; font-size: 13px; }}
-    td        {{ padding: 7px 14px; border-bottom: 1px solid #e0e0e0;
-                 font-size: 13px; vertical-align: top; }}
-    tr:nth-child(even) {{ background: #fafafa; }}
-    tr:hover  {{ background: #fff8ec; }}
-    .rating   {{ color: #FFD700; font-size: 15px; white-space: nowrap; }}
-    @media print {{
-      body {{ margin: 10px; }}
-      tr:hover {{ background: none; }}
-    }}
-  </style>
-</head>
-<body>
-  <h1>{title}</h1>
-  <p class="meta">Exported: {exported_at} &nbsp;|&nbsp; {len(data)} tab(s)</p>
-  <table>
-    <thead><tr>{header_cells}</tr></thead>
-    <tbody>
-{rows_html}    </tbody>
-  </table>
-</body>
-</html>"""
-
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(html)
-
-            self.statusBar().showMessage(
-                f"✓ Exported {len(data)} tab(s) → {os.path.basename(file_path)}"
-            )
-            # Open in browser immediately
-            webbrowser.open(f"file:///{os.path.abspath(file_path)}")
-
-        except Exception as e:
-            traceback.print_exc()
-            QMessageBox.critical(self, "Export Failed", f"Failed to export HTML: {e}")
-
-    # ------------------------------------------------------------------
-    # Database Backup
+    # Export DB (save a copy of the database file)
     # ------------------------------------------------------------------
     def backup_database(self):
+        timestamp    = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = f"guitar_tabs_backup_{timestamp}.db"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Database", default_name,
+            "SQLite Database (*.db);;All Files (*)"
+        )
+        if not file_path:
+            return
         try:
-            timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_name = f"guitar_tabs_backup_{timestamp}.db"
-            backup_path = os.path.join(os.path.dirname(self.db_path), backup_name)
-            shutil.copy2(self.db_path, backup_path)
-            self.statusBar().showMessage(f"✓ Backup saved: {backup_name}")
-            QMessageBox.information(
-                self, "Backup Successful",
-                f"Database backed up to:\n{backup_path}"
-            )
+            shutil.copy2(self.db_path, file_path)
+            self.statusBar().showMessage(f"Database saved to {os.path.basename(file_path)}")
         except Exception as e:
             traceback.print_exc()
-            QMessageBox.critical(self, "Backup Failed", f"Failed to backup database:\n{e}")
+            QMessageBox.critical(self, "Export Failed", str(e))
 
     # ------------------------------------------------------------------
     # Filters
