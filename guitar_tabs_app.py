@@ -977,11 +977,11 @@ QPushButton:checked {
     def export_to_csv(self):
         if self.current_view == "all":
             data         = self.db_manager.get_all_tabs()
-            headers      = ["Band", "Album", "Title", "Tuning", "Rating", "Genre", "Notes"]
+            headers      = ["band", "album", "title", "tuning", "rating", "genre", "notes"]
             default_name = "guitar_tabs_export.csv"
         else:
             data         = self.db_manager.get_all_learned_tabs()
-            headers      = ["Band", "Album", "Title", "Tuning", "Rating", "Genre", "Notes", "Learned Date"]
+            headers      = ["band", "album", "title", "tuning", "rating", "genre", "notes", "learned date"]
             default_name = "guitar_tabs_learned_export.csv"
 
         if not data:
