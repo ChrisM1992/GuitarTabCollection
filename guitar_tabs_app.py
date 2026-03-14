@@ -1,62 +1,88 @@
 import os
 import csv
-from PyQt5.QtWidgets import (QMainWindow, QTableView, QVBoxLayout,
-                             QHBoxLayout, QWidget, QPushButton, QComboBox,
-                             QLabel, QLineEdit, QHeaderView, QTabWidget,
-                             QMessageBox, QFileDialog, QDialog, QFrame,
-                             QFormLayout, QDialogButtonBox, QMenu, QAction)
-from PyQt5.QtCore import Qt, QSortFilterProxyModel, QPoint, QRegExp, QItemSelectionModel
-from PyQt5.QtGui import QFont, QIcon
+import webbrowser
+import urllib.parse
+import traceback
+
+from PyQt5.QtWidgets import (
+    QMainWindow, QTableView, QVBoxLayout, QHBoxLayout, QWidget,
+    QPushButton, QComboBox, QLabel, QLineEdit, QHeaderView, QTabWidget,
+    QMessageBox, QFileDialog, QDialog, QFormLayout, QDialogButtonBox,
+    QMenu, QAction, QSizePolicy, QStyledItemDelegate
+)
+from PyQt5.QtCore import Qt, QSortFilterProxyModel, QItemSelectionModel, QEvent
+from PyQt5.QtGui import QColor
+
 from tabs_data_model import TabsDataModel
 from database_manager import DatabaseManager
 from add_tab_dialog import AddTabDialog
 from add_tab_multi import BatchAddDialog
-from PyQt5.QtWidgets import (QSizePolicy)
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QStyledItemDelegate, QStyleOptionButton
-from PyQt5.QtCore import QRect
 from pitch_shifter import PitchShifterDialog
-import webbrowser
-import urllib.parse
 
 
+# ---------------------------------------------------------------------------
+# Module-level delegate — defined once, reused on every load_data() call
+# ---------------------------------------------------------------------------
+class UltimateGuitarDelegate(QStyledItemDelegate):
+    """Renders a clickable 'Open' button in the Ultimate Guitar column."""
 
+    def __init__(self, main_window, parent=None):
+        super().__init__(parent)
+        self._main_window = main_window
+
+    def paint(self, painter, option, index):
+        painter.save()
+        bg = QColor("#eaa13f") if option.state & 0x2000 else QColor("#e3ac63")  # State_MouseOver
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(bg)
+        painter.drawRoundedRect(option.rect.adjusted(2, 2, -2, -2), 4, 4)
+        painter.setPen(QColor("#000000"))
+        painter.drawText(option.rect.adjusted(4, 4, -4, -4), Qt.AlignCenter, "Open")
+        painter.restore()
+
+    def editorEvent(self, event, model, option, index):
+        if event.type() == QEvent.MouseButtonRelease:
+            source_model = model.sourceModel()
+            source_row = model.mapToSource(index).row()
+            band = source_model._data[source_row][1]
+            title = source_model._data[source_row][3]
+            self._main_window.searchTabOnline(band, title)
+            return True
+        return super().editorEvent(event, model, option, index)
+
+
+# ---------------------------------------------------------------------------
+# Advanced filter dialog
+# ---------------------------------------------------------------------------
 class AdvancedFilterDialog(QDialog):
-    """Dialog for advanced filtering"""
 
     def __init__(self, bands, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Advanced Filter")
         self.setMinimumWidth(300)
-
-        # Main layout
         layout = QFormLayout(self)
 
-        # Band filter
         self.band_filter = QComboBox()
         self.band_filter.addItem("Any")
         self.band_filter.addItems(sorted(bands))
         layout.addRow("Band:", self.band_filter)
 
-        # Album filter
         self.album_filter = QLineEdit()
         layout.addRow("Album:", self.album_filter)
 
-        # Rating filter
         self.rating_filter = QComboBox()
         self.rating_filter.addItems(["Any", "1+", "2+", "3+", "4+", "5"])
         layout.addRow("Rating:", self.rating_filter)
 
-        # Tuning filter
         self.tuning_filter = QLineEdit()
         layout.addRow("Tuning:", self.tuning_filter)
 
-        # Genre filter
         self.genre_filter = QLineEdit()
         layout.addRow("Genre:", self.genre_filter)
 
-        # Buttons
-        buttons = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Reset | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Apply | QDialogButtonBox.Reset | QDialogButtonBox.Cancel
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         buttons.button(QDialogButtonBox.Apply).clicked.connect(self.accept)
@@ -64,7 +90,6 @@ class AdvancedFilterDialog(QDialog):
         layout.addRow(buttons)
 
     def reset_filters(self):
-        """Reset all filters to default values"""
         self.band_filter.setCurrentIndex(0)
         self.album_filter.clear()
         self.rating_filter.setCurrentIndex(0)
@@ -72,18 +97,19 @@ class AdvancedFilterDialog(QDialog):
         self.genre_filter.clear()
 
     def get_filter_data(self):
-        """Get the filter criteria"""
         return {
             "band": self.band_filter.currentText() if self.band_filter.currentIndex() > 0 else "",
             "album": self.album_filter.text().strip(),
             "rating": self.rating_filter.currentIndex(),
             "tuning": self.tuning_filter.text().strip(),
-            "genre": self.genre_filter.text().strip()
+            "genre": self.genre_filter.text().strip(),
         }
 
 
+# ---------------------------------------------------------------------------
+# Custom proxy model
+# ---------------------------------------------------------------------------
 class CustomProxyModel(QSortFilterProxyModel):
-    """Custom proxy model for advanced filtering"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -94,12 +120,10 @@ class CustomProxyModel(QSortFilterProxyModel):
         self.genre_filter = ""
 
     def set_rating_filter(self, min_rating):
-        """Set minimum rating filter"""
         self.min_rating = min_rating
         self.invalidateFilter()
 
     def set_advanced_filters(self, filters):
-        """Set advanced filters"""
         self.band_filter = filters.get("band", "")
         self.album_filter = filters.get("album", "")
         self.min_rating = filters.get("rating", 0)
@@ -108,1362 +132,813 @@ class CustomProxyModel(QSortFilterProxyModel):
         self.invalidateFilter()
 
     def filterAcceptsRow(self, source_row, source_parent):
-        """Custom filter implementation"""
-        # First apply the standard filter (text-based)
         if not super().filterAcceptsRow(source_row, source_parent):
             return False
 
-        source_model = self.sourceModel()
+        m = self.sourceModel()
+        row = m._data[source_row]
 
-        # Apply rating filter
+        # Rating — column 5 in both 'all' and 'learned' data tuples
         if self.min_rating > 0:
-            rating_idx = source_model.index(source_row, 5, source_parent)  # 5 is Rating column
-            rating = int(source_model._data[source_row][5])
-            min_value = self.min_rating
-            if min_value == 5:  # Handle "5" case separately
-                if rating < 5:
-                    return False
-            else:  # Handle "1+" through "4+"
-                if rating < min_value:
-                    return False
+            try:
+                rating = int(row[5])
+                if self.min_rating == 5:
+                    if rating < 5:
+                        return False
+                else:
+                    if rating < self.min_rating:
+                        return False
+            except (IndexError, ValueError):
+                pass
 
-        # Apply band filter
-        if self.band_filter:
-            band_idx = source_model.index(source_row, 1, source_parent)  # 1 is Band column
-            band = str(source_model._data[source_row][1])
-            if not self.band_filter.lower() in band.lower():
-                return False
-
-        # Apply album filter
-        if self.album_filter:
-            album_idx = source_model.index(source_row, 2, source_parent)  # 2 is Album column
-            album = str(source_model._data[source_row][2])
-            if not self.album_filter.lower() in album.lower():
-                return False
-
-        # Apply tuning filter
-        if self.tuning_filter:
-            tuning_idx = source_model.index(source_row, 4, source_parent)  # 4 is Tuning column
-            tuning = str(source_model._data[source_row][4])
-            if not self.tuning_filter.lower() in tuning.lower():
-                return False
-
-        # Apply genre filter
-        if self.genre_filter:
-            genre_idx = source_model.index(source_row, 6, source_parent)  # 6 is Genre column
-            genre = str(source_model._data[source_row][6])
-            if not self.genre_filter.lower() in genre.lower():
-                return False
+        if self.band_filter and self.band_filter.lower() not in str(row[1]).lower():
+            return False
+        if self.album_filter and self.album_filter.lower() not in str(row[2]).lower():
+            return False
+        if self.tuning_filter and self.tuning_filter.lower() not in str(row[4]).lower():
+            return False
+        if self.genre_filter and self.genre_filter.lower() not in str(row[6]).lower():
+            return False
 
         return True
 
 
+# ---------------------------------------------------------------------------
+# Main application window
+# ---------------------------------------------------------------------------
 class GuitarTabsApp(QMainWindow):
-    """Main application window for the Guitar Tabs Collection Manager"""
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Guitar Tabs Collection Manager")
         self.setMinimumSize(1400, 800)
 
-        # Variables for window dragging
-        self.draggable = True
-        self.dragging_threshold = 5
         self.drag_position = None
 
-        # Set up database
         app_dir = os.path.dirname(os.path.abspath(__file__))
         db_path = os.path.join(app_dir, "guitar_tabs.db")
         self.db_manager = DatabaseManager(db_path)
-        
-        # Clean up empty bands on startup - with error handling
+
         try:
             self.db_manager.clean_up_empty_bands()
         except Exception as e:
-            print(f"Warning: Could not clean up empty bands on startup: {str(e)}")
-        
-        # Track current view mode
-        self.current_view = "all"  # 'all' or 'learned'
+            print(f"Warning: Could not clean up empty bands on startup: {e}")
 
-        # Initialize UI
+        self.current_view = "all"
+
         self.initUI()
-
-        # Load data
-        self.load_data()
-
-        #Calls Custom Taskbar
+        self.load_data(preserve_tab=False)
         self.setupCustomTitleBar()
 
-
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
     def initUI(self):
-        # Main layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # Top controls
+        # ── Top controls ──────────────────────────────────────────────
         top_controls = QHBoxLayout()
-        
-        # Mode selection buttons (keep on the left)
-        self.mode_buttons_layout = QHBoxLayout()
-        
-        # Tabs Collection button
+
+        mode_buttons_layout = QHBoxLayout()
+
         self.all_tabs_btn = QPushButton("Tabs Collection")
         self.all_tabs_btn.setCheckable(True)
         self.all_tabs_btn.setChecked(True)
         self.all_tabs_btn.clicked.connect(lambda: self.switch_mode("all"))
-        self.mode_buttons_layout.addWidget(self.all_tabs_btn)
-        
-        # Learned Tabs button
+        mode_buttons_layout.addWidget(self.all_tabs_btn)
+
         self.learned_tabs_btn = QPushButton("Learned")
         self.learned_tabs_btn.setCheckable(True)
         self.learned_tabs_btn.clicked.connect(lambda: self.switch_mode("learned"))
-        self.mode_buttons_layout.addWidget(self.learned_tabs_btn)
+        mode_buttons_layout.addWidget(self.learned_tabs_btn)
 
         self.pitch_shifter_btn = QPushButton("Pitch Shifter")
-        self.pitch_shifter_btn.setCheckable(False)  # Not a toggle button like the others
+        self.pitch_shifter_btn.setCheckable(False)
         self.pitch_shifter_btn.clicked.connect(self.show_pitch_shifter)
-        self.mode_buttons_layout.addWidget(self.pitch_shifter_btn)
-        
-        # Style the mode buttons
-        self.all_tabs_btn.setStyleSheet("""
-            QPushButton:checked {
-                background-color: #e3ac63;          
-                border: none;
-                color: black;
-                font-weight: bold;
-            }
-        """)
-        self.learned_tabs_btn.setStyleSheet("""
-            QPushButton:checked {
-                background-color: #e3ac63;
-                border: none;
-                color: black;
-                font-weight: bold;                         
-            }
-        """)
+        mode_buttons_layout.addWidget(self.pitch_shifter_btn)
 
-        self.pitch_shifter_btn.setStyleSheet("""
-            QPushButton:checked {
-                background-color: #e3ac63;          
-                border: none;
-                color: black;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #e3ac63;
-            }
-        """)
-        
-        # Add the mode buttons to the left side
-        top_controls.addLayout(self.mode_buttons_layout)
-        
-        # Add a stretching space to push the next buttons to the right
+        checked_style = """
+QPushButton:checked {
+    background-color: #e3ac63;
+    border: none;
+    color: black;
+    font-weight: bold;
+}
+"""
+        self.all_tabs_btn.setStyleSheet(checked_style)
+        self.learned_tabs_btn.setStyleSheet(checked_style)
+        self.pitch_shifter_btn.setStyleSheet(checked_style + """
+QPushButton:hover { background-color: #e3ac63; }
+""")
+
+        top_controls.addLayout(mode_buttons_layout)
         top_controls.addStretch(1)
-        
-        # Action buttons (on the right)
+
         action_buttons_layout = QHBoxLayout()
-        
-        # Add new tab button
+
         self.add_btn = QPushButton("Add New Tab")
         self.add_btn.clicked.connect(self.show_add_dialog)
+        self.add_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         action_buttons_layout.addWidget(self.add_btn)
 
-        # Add multiple button
-        self.batch_add_btn = QPushButton("Add multiple")
+        self.batch_add_btn = QPushButton("Add Multiple")
         self.batch_add_btn.clicked.connect(self.show_batch_add_dialog)
+        self.batch_add_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         action_buttons_layout.addWidget(self.batch_add_btn)
 
-        # CSV Import button
         self.csv_import_btn = QPushButton("Import CSV")
         self.csv_import_btn.clicked.connect(self.import_from_csv)
+        self.csv_import_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         action_buttons_layout.addWidget(self.csv_import_btn)
 
-        # Apply same size policy as other buttons
-        self.csv_import_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.csv_import_btn.adjustSize()
-        
-        # Add the action buttons to the right side
         top_controls.addLayout(action_buttons_layout)
-
-        # Add the top controls to the main layout
         main_layout.addLayout(top_controls)
-        
-        # Add spacing between buttons and table (increase this value for bigger gap)
         main_layout.addSpacing(20)
 
-        # Tabs widget to show different bands
+        # ── Tab widget ────────────────────────────────────────────────
         self.tabs_widget = QTabWidget()
         self.tabs_widget.setTabPosition(QTabWidget.North)
         self.tabs_widget.setMovable(True)
         self.tabs_widget.currentChanged.connect(self.on_tab_changed)
         main_layout.addWidget(self.tabs_widget)
 
-        # Filter controls
+        # ── Filter bar ────────────────────────────────────────────────
         filter_layout = QHBoxLayout()
-
         filter_layout.addWidget(QLabel("Filter:"))
 
-        # Filter field dropdown
         self.filter_field = QComboBox()
         self.filter_field.addItems(["All Fields", "Band", "Album", "Title", "Tuning", "Genre"])
         filter_layout.addWidget(self.filter_field)
 
-        # Text filter
         self.filter_text = QLineEdit()
         self.filter_text.setPlaceholderText("Type to filter...")
         self.filter_text.textChanged.connect(self.apply_filter)
         filter_layout.addWidget(self.filter_text)
 
-        # Rating filter
         filter_layout.addWidget(QLabel("Rating:"))
         self.rating_filter = QComboBox()
         self.rating_filter.addItems(["Any", "1+", "2+", "3+", "4+", "5"])
         self.rating_filter.currentIndexChanged.connect(self.apply_filter)
         filter_layout.addWidget(self.rating_filter)
 
-        # Advanced filter button
         self.adv_filter_btn = QPushButton("Advanced Filter")
         self.adv_filter_btn.clicked.connect(self.show_advanced_filter)
         filter_layout.addWidget(self.adv_filter_btn)
 
         main_layout.addLayout(filter_layout)
 
-        # Status bar
         self.statusBar().showMessage("Ready")
 
-        # Button sizes
-        self.add_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.add_btn.adjustSize()
-
-        self.batch_add_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.batch_add_btn.adjustSize()
-
+    # ------------------------------------------------------------------
+    # Mode switching
+    # ------------------------------------------------------------------
     def switch_mode(self, mode):
-        """Switch between All Tabs and Learned Tabs views"""
         if mode == self.current_view:
             return
-            
         self.current_view = mode
-        
-        # Update button states
         if mode == "all":
             self.all_tabs_btn.setChecked(True)
             self.learned_tabs_btn.setChecked(False)
-        else:  # mode == "learned"
+        else:
             self.all_tabs_btn.setChecked(False)
             self.learned_tabs_btn.setChecked(True)
-        
-        # Reload data with new mode
-        self.load_data()
+        # When switching modes we always want to land on the first tab
+        self.load_data(preserve_tab=False)
 
-    def show_context_menu(self, position):
-        """Show context menu for tabs table"""
+    # ------------------------------------------------------------------
+    # Data loading  ← FIX: preserve_tab saves & restores active tab
+    # ------------------------------------------------------------------
+    def load_data(self, preserve_tab=True):
+        """Reload data from the database.
+
+        Args:
+            preserve_tab: When True (default) the currently active band tab
+                          is remembered by name and re-selected after rebuild,
+                          so editing/deleting never jumps back to the first tab.
+                          Pass False when intentionally resetting (mode switch,
+                          initial load).
+        """
+        # ── Remember active tab name before clearing ──────────────────
+        active_tab_name = None
+        if preserve_tab and self.tabs_widget.count() > 0:
+            active_tab_name = self.tabs_widget.tabText(self.tabs_widget.currentIndex())
+
         try:
-            # Get current table view
-            current_tab = self.tabs_widget.currentWidget()
-            if not isinstance(current_tab, QTableView):
-                return
-            
-            # Get index at position
-            index = current_tab.indexAt(position)
-            
-            # Get selection model
-            selection_model = current_tab.selectionModel()
-            
-            # If no selection and clicked on a valid item, select that item
-            if not selection_model.hasSelection() and index.isValid():
-                selection_model.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
-            
-            # Get selected count
-            selected_rows = selection_model.selectedRows()
-            selected_count = len(selected_rows)
-            
-            if selected_count == 0:
-                return  # No selection, don't show menu
-            
-            # Create menu
-            menu = QMenu()
-            
-            # Add actions based on current view
-            if self.current_view == "all":
-                mark_action_text = f"Mark {selected_count} as Learned" if selected_count > 1 else "Mark as Learned"
-                add_to_learned_action = menu.addAction(mark_action_text)
-            else:  # "learned" view
-                remove_action_text = f"Remove {selected_count} from Learned" if selected_count > 1 else "Remove from Learned"
-                remove_from_learned_action = menu.addAction(remove_action_text)
-            
-            # Always add edit and delete actions
-            edit_action_text = f"Edit {selected_count} Tab(s)" if selected_count > 1 else "Edit Tab"
-            edit_action = menu.addAction(edit_action_text)
-            
-            delete_action_text = f"Delete {selected_count} Tab(s)" if selected_count > 1 else "Delete Tab"
-            delete_action = menu.addAction(delete_action_text)
-            
-            # Show menu
-            action = menu.exec_(current_tab.viewport().mapToGlobal(position))
-            
-            # Process action
-            if action is None:
-                return
-                    
-            if self.current_view == "all" and action == add_to_learned_action:
-                self.add_tab_to_learned(current_tab)
-            elif self.current_view == "learned" and action == remove_from_learned_action:
-                self.remove_from_learned(current_tab)
-            elif action == edit_action:
-                self.edit_selected_tabs()
-            elif action == delete_action:
-                self.delete_selected_tabs()
-        
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            print(f"Error in context menu: {str(e)}")
-            self.statusBar().showMessage(f"Error in context menu: {str(e)}")
-
-    def edit_selected_tabs(self):
-        """Edit the selected tabs"""
-        try:
-            # Get current tab widget
-            current_tab = self.tabs_widget.currentWidget()
-            if not isinstance(current_tab, QTableView):
-                return
-
-            # Get selected rows
-            selection_model = current_tab.selectionModel()
-            selected_rows = selection_model.selectedRows()
-            
-            if not selected_rows:
-                QMessageBox.warning(self, "Warning", "No tabs selected.")
-                return
-
-            # Get proxy model and source model
-            proxy_model = current_tab.model()
-            source_model = proxy_model.sourceModel()
-
-            # Collect tabs to edit
-            tabs_to_edit = []
-            for proxy_index in selected_rows:
-                source_index = proxy_model.mapToSource(proxy_index)
-                source_row = source_index.row()
-                
-                # Get tab data from source model
-                tab_data = {
-                    'id': source_model._data[source_row][0],
-                    'band': source_model._data[source_row][1],
-                    'album': source_model._data[source_row][2],
-                    'title': source_model._data[source_row][3],
-                    'tuning': source_model._data[source_row][4],
-                    'rating': source_model._data[source_row][5],
-                    'genre': source_model._data[source_row][6]
-                }
-                tabs_to_edit.append(tab_data)
-
-            # If multiple tabs selected, show warning
-            if len(tabs_to_edit) > 1:
-                QMessageBox.warning(self, "Edit Tabs", "Please edit tabs one at a time.")
-                return
-
-            # Get list of band names (for dialog)
-            bands = [band[1] for band in self.db_manager.get_all_bands()]
-
-            # Create edit dialog
-            dialog = AddTabDialog(bands, self)
-            
-            # Populate dialog with existing tab data
-            tab = tabs_to_edit[0]
-            dialog.band_combo.setCurrentText(tab['band'])
-            dialog.album.setText(tab['album'])
-            dialog.title.setText(tab['title'])
-            dialog.rating_stars.setRating(tab['rating'])
-            dialog.tuning.setCurrentText(tab['tuning'])
-            dialog.genre.setText(tab['genre'])
-
-            if dialog.exec_() == QDialog.Accepted:
-                # Get updated data
-                updated_tab_data = dialog.getTabData()
-                if updated_tab_data:
-                    try:
-                        # Update tab in database
-                        self.db_manager.update_tab(tab['id'], updated_tab_data)
-
-                        # Reload data
-                        self.load_data()
-
-                        # Show success message
-                        self.statusBar().showMessage(f"Updated tab: {updated_tab_data['title']} by {updated_tab_data['band']}")
-
-                    except Exception as e:
-                        QMessageBox.critical(self, "Error", f"Failed to update tab: {str(e)}")
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to edit tabs: {str(e)}")
-    
-    def show_learned_context_menu(self, position):
-        """Show context menu for learned tabs table"""
-        # Get current table view
-        current_tab = self.tabs_widget.currentWidget()
-        if not isinstance(current_tab, QTableView):
-            return
-        
-        # Get selection model
-        selection_model = current_tab.selectionModel()
-        
-        # Check if we have a selection
-        if not selection_model.hasSelection():
-            # If no selection, check if the clicked position is on a valid item
-            index = current_tab.indexAt(position)
-            if not index.isValid():
-                return
-                
-            # If no selection but clicked on a valid item, select that item
-            selection_model.select(index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
-        
-        # Get selected count
-        selected_count = len(selection_model.selectedRows())
-        
-        # Create menu
-        menu = QMenu()
-        
-        # Add action (with count in the text)
-        remove_action_text = f"Remove {selected_count} from Learned" if selected_count > 1 else "Remove from Learned"
-        remove_action = menu.addAction(remove_action_text)
-        
-        # Show menu
-        action = menu.exec_(current_tab.viewport().mapToGlobal(position))
-        
-        if action == remove_action:
-            # Don't pass index, let the method use the selection model
-            self.remove_from_learned(current_tab)
-    
-    def add_tab_to_learned(self, table_view, index=None):
-        """Add tab(s) to the learned tabs table"""
-        # Get all selected rows
-        selection_model = table_view.selectionModel()
-        indices = selection_model.selectedRows()
-        
-        if not indices:
-            # If no selected rows and a specific index was provided
-            if index and index.isValid():
-                indices = [index]
-            else:
-                return
-        
-        added_count = 0
-        already_learned = 0
-        tab_title = ""  # Initialize variable for status message
-        
-        # Process each selected row
-        for idx in indices:
-            proxy_model = table_view.model()
-            source_model = proxy_model.sourceModel()
-            source_row = proxy_model.mapToSource(idx).row()
-            
-            # Safely store title for single selection status message
-            if len(indices) == 1:
-                tab_title = source_model._data[source_row][3]  # Title column
-            
-            tab_id = source_model._data[source_row][0]
-            
-            try:
-                # Add to learned tabs
-                success = self.db_manager.add_to_learned(tab_id)
-                if success:
-                    added_count += 1
-                else:
-                    already_learned += 1
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to mark tab as learned: {str(e)}")
-        
-        # Status message - safely using tab_title only for single selections
-        if len(indices) == 1:
-            if added_count == 1:
-                self.statusBar().showMessage(f"'{tab_title}' marked as learned")
-            else:
-                self.statusBar().showMessage(f"'{tab_title}' already marked as learned")
-        else:
-            self.statusBar().showMessage(f"{added_count} tabs marked as learned, {already_learned} already learned")
-        
-        # Reload if in Learned view
-        if self.current_view == "learned":
-            self.load_data()
-
-    def remove_from_learned(self, table_view, index=None):
-        """Remove tab(s) from the learned tabs table"""
-        # Handle single or multiple selection
-        if index and index.isValid():
-            indices = [index]
-        else:
-            indices = table_view.selectionModel().selectedRows()
-        
-        if not indices:
-            return
-            
-        removed_count = 0
-        proxy_model = table_view.model()
-        source_model = proxy_model.sourceModel()
-        
-        for idx in indices:
-            source_row = proxy_model.mapToSource(idx).row()
-            tab_id = source_model._data[source_row][0]
-            
-            try:
-                self.db_manager.remove_from_learned(tab_id)
-                removed_count += 1
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to remove tab from learned: {str(e)}")
-        
-        # Reload data
-        self.load_data()
-        
-        # Show success message
-        if len(indices) == 1:
-            tab_title = source_model._data[source_row][3]  # Title column
-            self.statusBar().showMessage(f"'{tab_title}' removed from learned tabs")
-        else:
-            self.statusBar().showMessage(f"{removed_count} tabs removed from learned tabs")
-
-    def load_data(self):
-        """Load data from the database"""
-        try:
-            # Clear existing tabs
             self.tabs_widget.clear()
-            
-            # Get all bands
             bands = self.db_manager.get_all_bands()
-            
+
             if self.current_view == "all":
-                # Standard columns for all tabs view
-                columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Ultimate Guitar"]
-                
-                # Create "All Tabs" tab
-                all_tabs = self.db_manager.get_all_tabs()
-                if all_tabs:
-                    all_tabs_table = QTableView()
-                    all_tabs_model = TabsDataModel(all_tabs, columns)
-                    proxy_model = CustomProxyModel()
-                    proxy_model.setSourceModel(all_tabs_model)
-                    proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
-                    all_tabs_table.setModel(proxy_model)
+                self._load_all_tabs_view(bands)
+            else:
+                self._load_learned_tabs_view()
 
-                    # Configure table appearance
-                    all_tabs_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-                    all_tabs_table.hideColumn(0)  # Hide ID column
-                    all_tabs_table.setSortingEnabled(True)
-                    all_tabs_table.setAlternatingRowColors(True)
-                    all_tabs_table.setSelectionBehavior(QTableView.SelectRows)
-                    all_tabs_table.setSelectionMode(QTableView.ExtendedSelection)
-                    
-                    # Enable context menu
-                    all_tabs_table.setContextMenuPolicy(Qt.CustomContextMenu)
-                    all_tabs_table.customContextMenuRequested.connect(self.show_context_menu)
-                    
-                    # Add to tabs widget
-                    self.tabs_widget.addTab(all_tabs_table, "All Tabs")
-                
-                # Create "General" tab for bands with less than 5 songs
-                general_tabs = []
-                bands_with_few_songs = set()
-                
-                # Create a tab for each band with 5 or more songs, collect others for General tab
-                for band_id, band_name in bands:
-                    # Get tabs for this band
-                    band_tabs = self.db_manager.get_tabs_for_band(band_id)
+            # ── Restore active tab by name ────────────────────────────
+            if active_tab_name:
+                for i in range(self.tabs_widget.count()):
+                    if self.tabs_widget.tabText(i) == active_tab_name:
+                        self.tabs_widget.setCurrentIndex(i)
+                        break
 
-                    if len(band_tabs) < 5:
-                        # Add to general tabs
-                        general_tabs.extend(band_tabs)
-                        bands_with_few_songs.add(band_name)
-                    elif band_tabs:
-                        band_table = QTableView()
-                        band_model = TabsDataModel(band_tabs, columns)
-                        proxy_model = CustomProxyModel()
-                        proxy_model.setSourceModel(band_model)
-                        proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
-                        band_table.setModel(proxy_model)
-
-                        # Configure table appearance
-                        band_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-                        band_table.hideColumn(0)  # Hide ID column
-                        band_table.setSortingEnabled(True)
-                        band_table.setAlternatingRowColors(True)
-                        band_table.setSelectionBehavior(QTableView.SelectRows)
-                        band_table.setSelectionMode(QTableView.ExtendedSelection)
-                        
-                        # Enable context menu
-                        band_table.setContextMenuPolicy(Qt.CustomContextMenu)
-                        band_table.customContextMenuRequested.connect(self.show_context_menu)
-
-                        # Add to tabs widget
-                        self.tabs_widget.addTab(band_table, band_name)
-                
-                # Add the General tab if there are any bands with less than 5 songs
-                if general_tabs:
-                    general_table = QTableView()
-                    general_model = TabsDataModel(general_tabs, columns)
-                    proxy_model = CustomProxyModel()
-                    proxy_model.setSourceModel(general_model)
-                    proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
-                    general_table.setModel(proxy_model)
-
-                    # Configure table appearance
-                    general_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-                    general_table.hideColumn(0)  # Hide ID column
-                    general_table.setSortingEnabled(True)
-                    general_table.setAlternatingRowColors(True)
-                    general_table.setSelectionBehavior(QTableView.SelectRows)
-                    general_table.setSelectionMode(QTableView.ExtendedSelection)
-                    
-                    # Enable context menu
-                    general_table.setContextMenuPolicy(Qt.CustomContextMenu)
-                    general_table.customContextMenuRequested.connect(self.show_context_menu)
-
-                    # Add to tabs widget - place it right after "All Tabs"
-                    self.tabs_widget.insertTab(1, general_table, "General")
-                    
-                    # Update status to show which bands are in General tab
-                    bands_list = ", ".join(sorted(bands_with_few_songs))
-                    general_table.setToolTip(f"Bands with fewer than 5 songs: {bands_list}")
-            
-            else:  # self.current_view == "learned"
-                # Implementation for learned tabs view
-                # Columns for learned tabs view
-                columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Learned Date", "Ultimate Guitar"]
-                
-                # Get learned tabs
-                learned_tabs = self.db_manager.get_all_learned_tabs()
-                
-                if learned_tabs:
-                    # Create "All Learned" tab
-                    learned_table = QTableView()
-                    learned_model = TabsDataModel(learned_tabs, columns)
-                    proxy_model = CustomProxyModel()
-                    proxy_model.setSourceModel(learned_model)
-                    proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
-                    learned_table.setModel(proxy_model)
-                    
-                    # Configure table appearance
-                    learned_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-                    learned_table.hideColumn(0)  # Hide ID column
-                    learned_table.setSortingEnabled(True)
-                    learned_table.setAlternatingRowColors(True)
-                    learned_table.setSelectionBehavior(QTableView.SelectRows)
-                    learned_table.setSelectionMode(QTableView.ExtendedSelection)
-                    
-                    # Enable context menu for removing from learned
-                    learned_table.setContextMenuPolicy(Qt.CustomContextMenu)
-                    learned_table.customContextMenuRequested.connect(self.show_learned_context_menu)
-                    
-                    # Add to tabs widget
-                    self.tabs_widget.addTab(learned_table, "All Learned")
-                    
-                    # Create General tab for learned songs from bands with fewer than 5 learned songs
-                    general_learned_tabs = []
-                    bands_with_few_learned = set()
-                    
-                    # Group learned tabs by band
-                    band_learned_tabs = {}
-                    for tab in learned_tabs:
-                        band_name = tab[1]  # Band column
-                        if band_name not in band_learned_tabs:
-                            band_learned_tabs[band_name] = []
-                        band_learned_tabs[band_name].append(tab)
-                    
-                    # Create tabs for bands with 5+ learned songs, collect others for General
-                    for band_name, tabs in band_learned_tabs.items():
-                        if len(tabs) < 5:
-                            # Add to general learned tabs
-                            general_learned_tabs.extend(tabs)
-                            bands_with_few_learned.add(band_name)
-                        else:
-                            band_table = QTableView()
-                            band_model = TabsDataModel(tabs, columns)
-                            proxy_model = CustomProxyModel()
-                            proxy_model.setSourceModel(band_model)
-                            proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
-                            band_table.setModel(proxy_model)
-                            
-                            # Configure table appearance
-                            band_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-                            band_table.hideColumn(0)  # Hide ID column
-                            band_table.setSortingEnabled(True)
-                            band_table.setAlternatingRowColors(True)
-                            band_table.setSelectionBehavior(QTableView.SelectRows)
-                            band_table.setSelectionMode(QTableView.ExtendedSelection)
-                            
-                            # Enable context menu
-                            band_table.setContextMenuPolicy(Qt.CustomContextMenu)
-                            band_table.customContextMenuRequested.connect(self.show_learned_context_menu)
-                            
-                            # Add to tabs widget
-                            self.tabs_widget.addTab(band_table, band_name)
-                    
-                    # Add General tab for learned if needed
-                    if general_learned_tabs:
-                        general_table = QTableView()
-                        general_model = TabsDataModel(general_learned_tabs, columns)
-                        proxy_model = CustomProxyModel()
-                        proxy_model.setSourceModel(general_model)
-                        proxy_model.setFilterCaseSensitivity(Qt.CaseInsensitive)
-                        general_table.setModel(proxy_model)
-                        
-                        # Configure table appearance
-                        general_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-                        general_table.hideColumn(0)  # Hide ID column
-                        general_table.setSortingEnabled(True)
-                        general_table.setAlternatingRowColors(True)
-                        general_table.setSelectionBehavior(QTableView.SelectRows)
-                        general_table.setSelectionMode(QTableView.ExtendedSelection)
-                        
-                        # Enable context menu
-                        general_table.setContextMenuPolicy(Qt.CustomContextMenu)
-                        general_table.customContextMenuRequested.connect(self.show_learned_context_menu)
-                        
-                        # Add to tabs widget - place it right after "All Learned"
-                        self.tabs_widget.insertTab(1, general_table, "General")
-                        
-                        # Update tooltip to show which bands are in General tab
-                        bands_list = ", ".join(sorted(bands_with_few_learned))
-                        general_table.setToolTip(f"Bands with fewer than 5 learned songs: {bands_list}")
-                else:
-                    # Create an empty tab if no learned tabs
-                    empty_widget = QWidget()
-                    empty_layout = QVBoxLayout(empty_widget)
-                    empty_label = QLabel("No learned tabs yet. Right-click on tabs in 'All Tabs' view to mark them as learned.")
-                    empty_label.setAlignment(Qt.AlignCenter)
-                    empty_layout.addWidget(empty_label)
-                    self.tabs_widget.addTab(empty_widget, "Learned")
-            
-            # Update status bar
+            # Status bar
             if self.current_view == "all":
                 self.statusBar().showMessage(f"Loaded {len(bands)} bands")
             else:
                 learned_count = len(self.db_manager.get_all_learned_tabs())
                 self.statusBar().showMessage(f"Loaded {learned_count} learned tabs")
 
-            # Setup the search tab buttons after all tables are created
-            self.setupSearchTabButtons()
+            self._setup_ug_delegates()
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load data: {str(e)}")
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to load data: {e}")
             self.statusBar().showMessage("Error loading data")
 
-    def on_tab_changed(self, index):
-        """Handler for when user switches tabs"""
-        # Update status bar
-        if index >= 0:
-            tab_name = self.tabs_widget.tabText(index)
-            count = 0
-            if isinstance(self.tabs_widget.widget(index), QTableView):
-                model = self.tabs_widget.widget(index).model()
-                if isinstance(model, QSortFilterProxyModel):
-                    count = model.rowCount()
-            self.statusBar().showMessage(f"{tab_name}: {count} tabs")
+    def _build_table_view(self, data, columns):
+        """Helper: create a fully-configured QTableView for the given data."""
+        table = QTableView()
+        model = TabsDataModel(data, columns)
+        proxy = CustomProxyModel()
+        proxy.setSourceModel(model)
+        proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
+        table.setModel(proxy)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.hideColumn(0)
+        table.setSortingEnabled(True)
+        table.setAlternatingRowColors(True)
+        table.setSelectionBehavior(QTableView.SelectRows)
+        table.setSelectionMode(QTableView.ExtendedSelection)
+        table.setContextMenuPolicy(Qt.CustomContextMenu)
+        table.customContextMenuRequested.connect(self.show_context_menu)
+        return table
 
-    def show_advanced_filter(self):
-        """Show advanced filter dialog"""
-        # Get list of band names
-        bands = [band[1] for band in self.db_manager.get_all_bands()]
+    def _load_all_tabs_view(self, bands):
+        columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Ultimate Guitar"]
+        all_tabs = self.db_manager.get_all_tabs()
+        if all_tabs:
+            self.tabs_widget.addTab(self._build_table_view(all_tabs, columns), "All Tabs")
 
-        # Create and show dialog
-        dialog = AdvancedFilterDialog(bands, self)
+        general_tabs = []
+        bands_with_few = set()
 
-        if dialog.exec_() == QDialog.Accepted:
-            # Get filter criteria
-            filters = dialog.get_filter_data()
+        for band_id, band_name in bands:
+            band_tabs = self.db_manager.get_tabs_for_band(band_id)
+            if len(band_tabs) < 5:
+                general_tabs.extend(band_tabs)
+                bands_with_few.add(band_name)
+            elif band_tabs:
+                self.tabs_widget.addTab(self._build_table_view(band_tabs, columns), band_name)
 
-            # Apply to current table view
-            current_tab = self.tabs_widget.currentWidget()
-            if isinstance(current_tab, QTableView):
-                model = current_tab.model()
-                if isinstance(model, CustomProxyModel):
-                    model.set_advanced_filters(filters)
-                    self.statusBar().showMessage("Advanced filter applied")
+        if general_tabs:
+            general_table = self._build_table_view(general_tabs, columns)
+            general_table.setToolTip(
+                f"Bands with fewer than 5 songs: {', '.join(sorted(bands_with_few))}"
+            )
+            self.tabs_widget.insertTab(1, general_table, "General")
 
-    def apply_filter(self):
-        """Apply text and rating filter to the current table view"""
-        if self.tabs_widget.count() == 0:
+    def _load_learned_tabs_view(self):
+        columns = ["ID", "Band", "Album", "Title", "Tuning", "Rating", "Genre", "Learned Date", "Ultimate Guitar"]
+        learned_tabs = self.db_manager.get_all_learned_tabs()
+
+        if not learned_tabs:
+            empty_widget = QWidget()
+            empty_layout = QVBoxLayout(empty_widget)
+            empty_label = QLabel(
+                "No learned tabs yet.\n"
+                "Right-click on any tab in 'Tabs Collection' to mark it as learned."
+            )
+            empty_label.setAlignment(Qt.AlignCenter)
+            empty_layout.addWidget(empty_label)
+            self.tabs_widget.addTab(empty_widget, "Learned")
             return
 
-        current_tab = self.tabs_widget.currentWidget()
-        if not isinstance(current_tab, QTableView):
-            return
+        self.tabs_widget.addTab(self._build_table_view(learned_tabs, columns), "All Learned")
 
-        filter_text = self.filter_text.text()
-        filter_field = self.filter_field.currentText()
-        rating_index = self.rating_filter.currentIndex()
+        band_learned_tabs = {}
+        for tab in learned_tabs:
+            band_learned_tabs.setdefault(tab[1], []).append(tab)
 
-        proxy_model = current_tab.model()
-        if not isinstance(proxy_model, CustomProxyModel):
-            return
+        general_learned = []
+        bands_with_few = set()
 
-        # Map field names to column indices
-        field_map = {
-            "All Fields": -1,
-            "Band": 1,
-            "Album": 2,
-            "Title": 3,
-            "Tuning": 4,
-            "Genre": 6
-        }
+        for band_name, tabs in band_learned_tabs.items():
+            if len(tabs) < 5:
+                general_learned.extend(tabs)
+                bands_with_few.add(band_name)
+            else:
+                self.tabs_widget.addTab(self._build_table_view(tabs, columns), band_name)
 
-        # Set filter column based on selection
-        column_index = field_map.get(filter_field, -1)
-        proxy_model.setFilterKeyColumn(column_index)
+        if general_learned:
+            general_table = self._build_table_view(general_learned, columns)
+            general_table.setToolTip(
+                f"Bands with fewer than 5 learned songs: {', '.join(sorted(bands_with_few))}"
+            )
+            self.tabs_widget.insertTab(1, general_table, "General")
 
-        # Set rating filter
-        proxy_model.set_rating_filter(rating_index)
-
-        # Apply text filter
-        proxy_model.setFilterFixedString(filter_text)
-
-    def show_add_dialog(self):
-        """Show dialog to add a new tab with duplicate checking"""
-        # Get list of band names
-        bands = [band[1] for band in self.db_manager.get_all_bands()]
-
-        # Get tunings from database
-        tunings = self.db_manager.get_all_tunings()
-
-        # Show dialog
-        dialog = AddTabDialog(bands, self)
-
-        # Set the tunings from database if method available
-        if hasattr(dialog, 'tunings') and hasattr(dialog.tuning, 'clear'):
-            dialog.tunings = tunings
-            dialog.tuning.clear()
-            dialog.tuning.addItems(tunings)
-
-        if dialog.exec_() == QDialog.Accepted:
-            # Get data from dialog
-            tab_data = dialog.getTabData()
-            if tab_data:
-                try:
-                    # Check if the tab already exists
-                    if self.db_manager.tab_exists(tab_data["band"], tab_data["album"], tab_data["title"]):
-                        QMessageBox.warning(
-                            self, 
-                            "Duplicate Tab", 
-                            f"A tab for '{tab_data['title']}' by '{tab_data['band']}' from album '{tab_data['album']}' already exists."
-                        )
-                        return
-                    
-                    # Add to database
-                    self.db_manager.add_tab(tab_data)
-
-                    # Reload data
-                    self.load_data()
-
-                    # Show success message
-                    self.statusBar().showMessage(f"Added new tab: {tab_data['title']} by {tab_data['band']}")
-
-                except ValueError as ve:
-                    # This would be thrown by our duplicate check in add_tab
-                    QMessageBox.warning(self, "Duplicate Tab", str(ve))
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Failed to add tab: {str(e)}")
-
-    def show_batch_add_dialog(self):
-        """Show dialog to add multiple tabs at once with duplicate checking"""
-        # Get list of band names from the database
-        bands = [band[1] for band in self.db_manager.get_all_bands()]
-
-        # Get tunings from database
-        tunings = self.db_manager.get_all_tunings()
-
-        # Create and show the batch add dialog
-        dialog = BatchAddDialog(bands, self)
-
-        # Set the tunings from database if method available
-        if hasattr(dialog, 'tunings') and hasattr(dialog.tuning, 'clear'):
-            dialog.tunings = tunings
-            dialog.tuning.clear()
-            dialog.tuning.addItems(tunings)
-
-        # Execute the dialog and wait for user input
-        if dialog.exec_() == QDialog.Accepted:
+    # ------------------------------------------------------------------
+    # Ultimate Guitar button delegates
+    # ------------------------------------------------------------------
+    def _setup_ug_delegates(self):
+        delegate = UltimateGuitarDelegate(self)
+        for i in range(self.tabs_widget.count()):
+            table = self.tabs_widget.widget(i)
+            if not isinstance(table, QTableView):
+                continue
+            source_model = table.model().sourceModel()
+            # Connect signal (guard against duplicate connections)
             try:
-                # Get the entered data
-                tabs_data = dialog.getTabsData()
-                
-                # Track statistics
-                success_count = 0
-                duplicate_count = 0
-                error_count = 0
+                source_model.searchTabRequested.disconnect(self.searchTabOnline)
+            except TypeError:
+                pass
+            source_model.searchTabRequested.connect(self.searchTabOnline)
+            try:
+                ug_col = source_model.columns.index("Ultimate Guitar")
+                table.setItemDelegateForColumn(ug_col, delegate)
+                table.setColumnWidth(ug_col, 100)
+            except ValueError:
+                pass
 
-                # Add the tabs to the database
-                for tab in tabs_data:
-                    try:
-                        # Check for duplicate
-                        if self.db_manager.tab_exists(tab["band"], tab["album"], tab["title"]):
-                            duplicate_count += 1
-                            continue
-                            
-                        self.db_manager.add_tab(tab)
-                        success_count += 1
-                    except ValueError as ve:
-                        # This would be our duplicate error
-                        duplicate_count += 1
-                    except Exception as e:
-                        error_count += 1
-                        print(f"Error adding tab {tab['title']}: {e}")
-
-                # Refresh the table view
-                self.load_data()
-
-                # Show detailed success message
-                message = f"Successfully added {success_count} tabs"
-                if duplicate_count > 0:
-                    message += f", {duplicate_count} duplicates skipped"
-                if error_count > 0:
-                    message += f", {error_count} errors"
-                    
-                self.statusBar().showMessage(message)
-
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to add tabs: {str(e)}")
-
-    def delete_selected_tabs(self):
-        """Delete the selected tabs"""
+    def searchTabOnline(self, band, title):
         try:
-            # Get current tab widget
+            encoded = urllib.parse.quote(f"{band} {title}")
+            url = f"https://www.ultimate-guitar.com/search.php?search_type=title&value={encoded}"
+            webbrowser.open(url)
+            self.statusBar().showMessage(f"Searching '{band} – {title}' on Ultimate Guitar…")
+        except Exception as e:
+            traceback.print_exc()
+            self.statusBar().showMessage(f"Error opening UG search: {e}")
+
+    # ------------------------------------------------------------------
+    # Context menu  (single handler for both views)
+    # ------------------------------------------------------------------
+    def show_context_menu(self, position):
+        try:
             current_tab = self.tabs_widget.currentWidget()
             if not isinstance(current_tab, QTableView):
                 return
 
-            # Get selected rows
+            index = current_tab.indexAt(position)
             selection_model = current_tab.selectionModel()
-            if not selection_model.hasSelection():
+
+            if not selection_model.hasSelection() and index.isValid():
+                selection_model.select(
+                    index, QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows
+                )
+
+            selected_rows = selection_model.selectedRows()
+            if not selected_rows:
+                return
+
+            n = len(selected_rows)
+            menu = QMenu()
+
+            if self.current_view == "all":
+                learned_action = menu.addAction(f"Mark {n} as Learned" if n > 1 else "Mark as Learned")
+            else:
+                remove_action = menu.addAction(f"Remove {n} from Learned" if n > 1 else "Remove from Learned")
+
+            edit_action = menu.addAction(f"Edit {n} Tab(s)" if n > 1 else "Edit Tab")
+            delete_action = menu.addAction(f"Delete {n} Tab(s)" if n > 1 else "Delete Tab")
+
+            action = menu.exec_(current_tab.viewport().mapToGlobal(position))
+            if action is None:
+                return
+
+            if self.current_view == "all" and action == learned_action:
+                self.add_tab_to_learned(current_tab)
+            elif self.current_view == "learned" and action == remove_action:
+                self.remove_from_learned(current_tab)
+            elif action == edit_action:
+                self.edit_selected_tabs()
+            elif action == delete_action:
+                self.delete_selected_tabs()
+
+        except Exception as e:
+            traceback.print_exc()
+            self.statusBar().showMessage(f"Context menu error: {e}")
+
+    # ------------------------------------------------------------------
+    # Edit
+    # ------------------------------------------------------------------
+    def edit_selected_tabs(self):
+        try:
+            current_tab = self.tabs_widget.currentWidget()
+            if not isinstance(current_tab, QTableView):
+                return
+
+            selected_rows = current_tab.selectionModel().selectedRows()
+            if not selected_rows:
+                QMessageBox.warning(self, "Warning", "No tabs selected.")
+                return
+            if len(selected_rows) > 1:
+                QMessageBox.warning(self, "Edit Tabs", "Please edit tabs one at a time.")
+                return
+
+            proxy_model = current_tab.model()
+            source_model = proxy_model.sourceModel()
+            source_row = proxy_model.mapToSource(selected_rows[0]).row()
+            row_data = source_model._data[source_row]
+
+            tab = {
+                'id':     row_data[0],
+                'band':   row_data[1],
+                'album':  row_data[2],
+                'title':  row_data[3],
+                'tuning': row_data[4],
+                'rating': int(row_data[5]),
+                'genre':  row_data[6],
+            }
+
+            bands = [b[1] for b in self.db_manager.get_all_bands()]
+            dialog = AddTabDialog(bands, self)
+            dialog.band_combo.setCurrentText(tab['band'])
+            dialog.album.setText(tab['album'])
+            dialog.title.setText(tab['title'])
+            dialog.tuning.setCurrentText(tab['tuning'])
+            dialog.rating_stars.setRating(tab['rating'])
+            dialog.genre.setText(tab['genre'])
+
+            if dialog.exec_() == QDialog.Accepted:
+                updated = dialog.getTabData()
+                if updated:
+                    self.db_manager.update_tab(tab['id'], updated)
+                    # preserve_tab=True keeps us on the current band tab
+                    self.load_data(preserve_tab=True)
+                    self.statusBar().showMessage(
+                        f"Updated: {updated['title']} by {updated['band']}"
+                    )
+
+        except Exception as e:
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to edit tab: {e}")
+
+    # ------------------------------------------------------------------
+    # Learned helpers
+    # ------------------------------------------------------------------
+    def add_tab_to_learned(self, table_view, index=None):
+        selection_model = table_view.selectionModel()
+        indices = selection_model.selectedRows()
+        if not indices:
+            if index and index.isValid():
+                indices = [index]
+            else:
+                return
+
+        added = 0
+        already = 0
+        tab_title = ""
+
+        for idx in indices:
+            proxy_model = table_view.model()
+            source_model = proxy_model.sourceModel()
+            source_row = proxy_model.mapToSource(idx).row()
+            if len(indices) == 1:
+                tab_title = source_model._data[source_row][3]
+            tab_id = source_model._data[source_row][0]
+            try:
+                if self.db_manager.add_to_learned(tab_id):
+                    added += 1
+                else:
+                    already += 1
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to mark tab as learned: {e}")
+
+        if len(indices) == 1:
+            msg = f"'{tab_title}' marked as learned" if added else f"'{tab_title}' already marked as learned"
+        else:
+            msg = f"{added} tabs marked as learned, {already} already learned"
+        self.statusBar().showMessage(msg)
+
+        if self.current_view == "learned":
+            self.load_data(preserve_tab=True)
+
+    def remove_from_learned(self, table_view, index=None):
+        indices = [index] if (index and index.isValid()) else table_view.selectionModel().selectedRows()
+        if not indices:
+            return
+
+        proxy_model = table_view.model()
+        source_model = proxy_model.sourceModel()
+        removed = 0
+        last_title = ""
+
+        for idx in indices:
+            source_row = proxy_model.mapToSource(idx).row()
+            last_title = source_model._data[source_row][3]
+            tab_id = source_model._data[source_row][0]
+            try:
+                self.db_manager.remove_from_learned(tab_id)
+                removed += 1
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to remove from learned: {e}")
+
+        self.load_data(preserve_tab=True)
+
+        msg = (f"'{last_title}' removed from learned" if len(indices) == 1
+               else f"{removed} tabs removed from learned")
+        self.statusBar().showMessage(msg)
+
+    # ------------------------------------------------------------------
+    # Delete
+    # ------------------------------------------------------------------
+    def delete_selected_tabs(self):
+        try:
+            current_tab = self.tabs_widget.currentWidget()
+            if not isinstance(current_tab, QTableView):
+                return
+
+            selection_model = current_tab.selectionModel()
+            selected_rows = selection_model.selectedRows()
+            if not selected_rows:
                 QMessageBox.warning(self, "Warning", "No tabs selected.")
                 return
 
-            # Get all selected row indices
-            selected_rows = selection_model.selectedRows()
-            if not selected_rows:
-                QMessageBox.warning(self, "Warning", "No rows selected.")
+            if QMessageBox.question(
+                self,
+                "Confirm Deletion",
+                f"Delete {len(selected_rows)} selected tab(s)?",
+                QMessageBox.Yes | QMessageBox.No,
+            ) != QMessageBox.Yes:
                 return
 
-            # Confirm deletion
-            if QMessageBox.question(
-                    self,
-                    "Confirm Deletion",
-                    f"Are you sure you want to delete {len(selected_rows)} selected tab(s)?",
-                    QMessageBox.Yes | QMessageBox.No
-            ) == QMessageBox.Yes:
-                # Get proxy model and source model
-                proxy_model = current_tab.model()
-                source_model = proxy_model.sourceModel()
+            proxy_model = current_tab.model()
+            source_model = proxy_model.sourceModel()
 
-                # Collect all tab IDs to delete (from last to first to avoid index shifting)
-                tab_ids = []
-                for proxy_index in sorted(selected_rows, key=lambda x: x.row(), reverse=True):
-                    proxy_row = proxy_index.row()
-                    source_index = proxy_model.mapToSource(proxy_index)
-                    
-                    if not source_index.isValid():
-                        continue
-                        
-                    source_row = source_index.row()
-                    # Make sure the row exists in source model data
-                    if 0 <= source_row < len(source_model._data):
-                        tab_id = source_model._data[source_row][0]  # Get ID from first column
-                        tab_ids.append(tab_id)
+            tab_ids = []
+            for proxy_index in sorted(selected_rows, key=lambda x: x.row(), reverse=True):
+                source_index = proxy_model.mapToSource(proxy_index)
+                if not source_index.isValid():
+                    continue
+                source_row = source_index.row()
+                if 0 <= source_row < len(source_model._data):
+                    tab_ids.append(source_model._data[source_row][0])
 
-                # Delete all tabs from database
-                deleted_count = 0
-                for tab_id in tab_ids:
-                    try:
-                        self.db_manager.delete_tab(tab_id)
-                        deleted_count += 1
-                    except Exception as e:
-                        print(f"Error deleting tab {tab_id}: {str(e)}")
-                    
-                # Clean up empty bands after deletion
-                empty_bands_removed = 0
+            deleted = 0
+            for tab_id in tab_ids:
                 try:
-                    empty_bands_removed = self.db_manager.clean_up_empty_bands() or 0
+                    self.db_manager.delete_tab(tab_id)
+                    deleted += 1
                 except Exception as e:
-                    print(f"Error cleaning up empty bands: {str(e)}")
+                    print(f"Error deleting tab {tab_id}: {e}")
 
-                # Reload data
-                self.load_data()
+            empty_bands = 0
+            try:
+                empty_bands = self.db_manager.clean_up_empty_bands() or 0
+            except Exception as e:
+                print(f"Error cleaning up bands: {e}")
 
-                # Show success message
-                if deleted_count > 0:
-                    delete_message = f"{deleted_count} tabs deleted successfully"
-                    if empty_bands_removed > 0:
-                        delete_message += f", {empty_bands_removed} empty band(s) removed"
-                    self.statusBar().showMessage(delete_message)
-                else:
-                    self.statusBar().showMessage("No tabs were deleted")
+            self.load_data(preserve_tab=True)
+
+            msg = f"{deleted} tab(s) deleted"
+            if empty_bands:
+                msg += f", {empty_bands} empty band(s) removed"
+            self.statusBar().showMessage(msg)
 
         except Exception as e:
-            import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to delete tabs: {str(e)}")
-            self.statusBar().showMessage("Error deleting tabs")
+            QMessageBox.critical(self, "Error", f"Failed to delete tabs: {e}")
 
-    # Event handlers for dragging the window
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton and self.draggable:
-            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
-            event.accept()
+    # ------------------------------------------------------------------
+    # Add dialogs
+    # ------------------------------------------------------------------
+    def show_add_dialog(self):
+        bands = [b[1] for b in self.db_manager.get_all_bands()]
+        dialog = AddTabDialog(bands, self)
 
-    def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.LeftButton and self.drag_position is not None:
-            self.move(event.globalPos() - self.drag_position)
-            event.accept()
+        if dialog.exec_() == QDialog.Accepted:
+            tab_data = dialog.getTabData()
+            if tab_data:
+                try:
+                    if self.db_manager.tab_exists(tab_data["band"], tab_data["album"], tab_data["title"]):
+                        QMessageBox.warning(
+                            self, "Duplicate Tab",
+                            f"'{tab_data['title']}' by '{tab_data['band']}' "
+                            f"(album: '{tab_data['album']}') already exists."
+                        )
+                        return
+                    self.db_manager.add_tab(tab_data)
+                    self.load_data(preserve_tab=True)
+                    self.statusBar().showMessage(
+                        f"Added: {tab_data['title']} by {tab_data['band']}"
+                    )
+                except ValueError as ve:
+                    QMessageBox.warning(self, "Duplicate Tab", str(ve))
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to add tab: {e}")
 
-    def mouseReleaseEvent(self, event):
-        self.drag_position = None
-        event.accept()
+    def show_batch_add_dialog(self):
+        bands = [b[1] for b in self.db_manager.get_all_bands()]
+        dialog = BatchAddDialog(bands, self)
 
+        if dialog.exec_() == QDialog.Accepted:
+            try:
+                tabs_data = dialog.getTabsData()
+                success = duplicate = error = 0
+
+                for tab in tabs_data:
+                    try:
+                        if self.db_manager.tab_exists(tab["band"], tab["album"], tab["title"]):
+                            duplicate += 1
+                            continue
+                        self.db_manager.add_tab(tab)
+                        success += 1
+                    except ValueError:
+                        duplicate += 1
+                    except Exception as e:
+                        error += 1
+                        print(f"Error adding tab {tab.get('title', '?')}: {e}")
+
+                self.load_data(preserve_tab=True)
+                msg = f"Added {success} tab(s)"
+                if duplicate:
+                    msg += f", {duplicate} duplicate(s) skipped"
+                if error:
+                    msg += f", {error} error(s)"
+                self.statusBar().showMessage(msg)
+
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to add tabs: {e}")
+
+    # ------------------------------------------------------------------
+    # CSV Import
+    # ------------------------------------------------------------------
     def import_from_csv(self):
-        """Import tabs from a CSV file with duplicate checking"""
-        # Open file dialog to select CSV file
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Import CSV", "", "CSV Files (*.csv);;All Files (*)"
         )
-        
         if not file_path:
             return
-            
+
         try:
-            # Read CSV file
-            import csv
-            
-            # Add debug messages
-            self.statusBar().showMessage(f"Reading CSV file: {file_path}")
-            
-            with open(file_path, 'r', encoding='utf-8-sig') as csv_file:  # Using utf-8-sig to handle BOM
-                # Read first line to determine column names
-                first_line = csv_file.readline().strip()
-                csv_file.seek(0)  # Go back to beginning of file
-                
-                # Print column names for debugging
-                print(f"CSV Headers: {first_line}")
-                
-                # Create reader with proper handling of column names
-                reader = csv.DictReader(csv_file)
-                print(f"Column names detected: {reader.fieldnames}")
-                
-                # Count successful imports and track statistics
-                success_count = 0
-                error_count = 0
-                duplicate_count = 0
-                
-                # Process each row
+            success = duplicate = error = 0
+
+            with open(file_path, "r", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                print(f"CSV columns: {reader.fieldnames}")
+
                 for row in reader:
                     try:
-                        # Debug print each row
-                        print(f"Processing row: {row}")
-                        
-                        # Handle potential typo in 'genre' column (genrge)
-                        genre = row.get('genre', '')
-                        if not genre:
-                            genre = row.get('genrge', '')
-                        
-                        # Skip empty rows
-                        if not row.get('band') or not row.get('title'):
-                            print("Skipping row without band or title")
+                        band = row.get("band", "").strip()
+                        title = row.get("title", "").strip()
+                        if not band or not title:
                             continue
-                        
-                        # Extract data from row (using get to handle missing columns)
-                        # Handle rating - use default 3 if empty or None
-                        rating_value = row.get('rating')
-                        if rating_value is None or rating_value == '':
+
+                        album = row.get("album", "").strip()
+                        tuning = row.get("Tuning", row.get("tuning", "")).strip()
+                        genre = (row.get("genre") or row.get("genrge", "")).strip()
+
+                        try:
+                            rating = int(float(row.get("rating") or 1))
+                        except (ValueError, TypeError):
                             rating = 1
-                        else:
-                            try:
-                                rating = int(float(rating_value))
-                            except:
-                                rating = 1  # Default if conversion fails
-                        
-                        band = row.get('band', '').strip()
-                        album = row.get('album', '').strip()
-                        title = row.get('title', '').strip()
-                        tuning = row.get('Tuning', row.get('tuning', '')).strip()  # Try both capitalizations
-                        
-                        # Check for duplicate before adding
+
                         if self.db_manager.tab_exists(band, album, title):
-                            print(f"Duplicate found: {band} - {album} - {title}")
-                            duplicate_count += 1
+                            duplicate += 1
                             continue
-                        
-                        tab_data = {
-                            "band": band,
-                            "album": album,
-                            "title": title,
-                            "tuning": tuning,
-                            "rating": rating,
-                            "genre": genre.strip()
-                        }
-                        
-                        print(f"Adding tab: {tab_data}")
-                        
-                        # Add to database
-                        self.db_manager.add_tab(tab_data)
-                        success_count += 1
-                        
-                    except ValueError as ve:
-                        # This is for our duplicate check error
-                        print(f"Duplicate tab: {ve}")
-                        duplicate_count += 1
-                        continue
+
+                        self.db_manager.add_tab(
+                            {"band": band, "album": album, "title": title,
+                             "tuning": tuning, "rating": rating, "genre": genre}
+                        )
+                        success += 1
+
+                    except ValueError:
+                        duplicate += 1
                     except Exception as e:
-                        print(f"Error importing row: {e}")
-                        error_count += 1
-                        continue
-                
-                # Show detailed status message
-                status_msg = f"Imported {success_count} tabs"
-                if duplicate_count > 0:
-                    status_msg += f", {duplicate_count} duplicates skipped"
-                if error_count > 0:
-                    status_msg += f", {error_count} errors"
-                
-                # Reload data
-                self.load_data()
-                
-                # Show success message
-                self.statusBar().showMessage(status_msg)
-                
+                        print(f"Row error: {e}")
+                        error += 1
+
+            self.load_data(preserve_tab=True)
+            msg = f"Imported {success} tab(s)"
+            if duplicate:
+                msg += f", {duplicate} duplicate(s) skipped"
+            if error:
+                msg += f", {error} error(s)"
+            self.statusBar().showMessage(msg)
+
         except Exception as e:
-            import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to import CSV file: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to import CSV: {e}")
 
-            # Add this to the GuitarTabsApp class in guitar_tabs_app.py
+    # ------------------------------------------------------------------
+    # Filters
+    # ------------------------------------------------------------------
+    def apply_filter(self):
+        if self.tabs_widget.count() == 0:
+            return
+        current_tab = self.tabs_widget.currentWidget()
+        if not isinstance(current_tab, QTableView):
+            return
 
-    def setupCustomTitleBar(self):
-        # Remove the default title bar
-        self.setWindowFlags(Qt.FramelessWindowHint)
-        
-        # Create a custom title bar widget
-        title_bar = QWidget()
-        title_bar.setFixedHeight(40)  # Increased height for better button display
-        title_bar.setStyleSheet("background-color: #3a3a3a;")  # Dark gray color
-        
-        # Create title bar layout
-        title_layout = QHBoxLayout(title_bar)
-        title_layout.setContentsMargins(10, 0, 10, 0)
-        title_layout.setSpacing(5)  # Add spacing between buttons
-        
-        # Add title text
-        title_label = QLabel("Guitar Tabs Collection Manager")
-        title_label.setStyleSheet("color: white; font-weight: bold;")
-        title_layout.addWidget(title_label)
-        
-        # Add spacer to push buttons to the right
-        title_layout.addStretch()
-        
-        # Add window control buttons (minimize, maximize, close)
-        min_button = QPushButton("_")
-        min_button.setFixedSize(30, 30)  # Increased size
-        min_button.clicked.connect(self.showMinimized)
-        
-        max_button = QPushButton("□")
-        max_button.setFixedSize(30, 30)  # Increased size
-        max_button.clicked.connect(self.toggleMaximized)
-        
-        close_button = QPushButton("×")
-        close_button.setFixedSize(30, 30)  # Increased size
-        close_button.clicked.connect(self.close)
-        
-        # Style the buttons
-        button_style = """
-            QPushButton {
-                background-color: transparent;
-                color: white;
-                border: none;
-                font-size: 16px;  /* Increased font size */
-                text-align: center;
-                padding: 0px;
-                margin: 0px;
-                font-family: Arial;
-            }
-            QPushButton:hover {
-                background-color: #555555;
-            }
-        """
-        min_button.setStyleSheet(button_style)
-        max_button.setStyleSheet(button_style)
-        
-        # Make close button red on hover
-        close_button.setStyleSheet(button_style + """
-            QPushButton:hover {
-                background-color: #E81123;
-            }
-        """)
-        
-        # Alternative unicode symbols if needed
-        # min_button.setText("\u2212")  # Unicode minus sign
-        # max_button.setText("\u25A1")  # Unicode white square
-        # close_button.setText("\u2715")  # Unicode multiplication X
-        
-        title_layout.addWidget(min_button)
-        title_layout.addWidget(max_button)
-        title_layout.addWidget(close_button)
-        
-        # Add the title bar to the top of the main layout
-        main_layout = self.centralWidget().layout()
-        main_layout.insertWidget(0, title_bar)
-        
-        # Make the title bar draggable to move the window
-        title_bar.mousePressEvent = self.titleBarMousePressEvent
-        title_bar.mouseMoveEvent = self.titleBarMouseMoveEvent
-        title_bar.mouseReleaseEvent = self.titleBarMouseReleaseEvent
-        
-        # Initialize drag position
-        self.drag_position = None
+        proxy = current_tab.model()
+        if not isinstance(proxy, CustomProxyModel):
+            return
 
-    def toggleMaximized(self):
-        if self.isMaximized():
-            self.showNormal()
-        else:
-            self.showMaximized()
+        field_map = {
+            "All Fields": -1, "Band": 1, "Album": 2,
+            "Title": 3, "Tuning": 4, "Genre": 6,
+        }
+        proxy.setFilterKeyColumn(field_map.get(self.filter_field.currentText(), -1))
+        proxy.set_rating_filter(self.rating_filter.currentIndex())
+        proxy.setFilterFixedString(self.filter_text.text())
 
-    def titleBarMousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
-            event.accept()
+    def show_advanced_filter(self):
+        bands = [b[1] for b in self.db_manager.get_all_bands()]
+        dialog = AdvancedFilterDialog(bands, self)
+        if dialog.exec_() == QDialog.Accepted:
+            current_tab = self.tabs_widget.currentWidget()
+            if isinstance(current_tab, QTableView):
+                proxy = current_tab.model()
+                if isinstance(proxy, CustomProxyModel):
+                    proxy.set_advanced_filters(dialog.get_filter_data())
+                    self.statusBar().showMessage("Advanced filter applied")
 
-    def titleBarMouseMoveEvent(self, event):
-        if event.buttons() == Qt.LeftButton and self.drag_position is not None:
-            self.move(event.globalPos() - self.drag_position)
-            event.accept()
+    # ------------------------------------------------------------------
+    # Tab changed
+    # ------------------------------------------------------------------
+    def on_tab_changed(self, index):
+        if index < 0:
+            return
+        tab_name = self.tabs_widget.tabText(index)
+        count = 0
+        widget = self.tabs_widget.widget(index)
+        if isinstance(widget, QTableView) and isinstance(widget.model(), QSortFilterProxyModel):
+            count = widget.model().rowCount()
+        self.statusBar().showMessage(f"{tab_name}: {count} tab(s)")
 
-    def titleBarMouseReleaseEvent(self, event):
-        self.drag_position = None
-        event.accept()
-
-    def toggleMaximized(self):
-        if self.isMaximized():
-            self.showNormal()
-        else:
-            self.showMaximized()
-
-    def titleBarMousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
-            event.accept()
-
-    def titleBarMouseMoveEvent(self, event):
-        if event.buttons() == Qt.LeftButton and self.drag_position is not None:
-            self.move(event.globalPos() - self.drag_position)
-            event.accept()
-
-    def titleBarMouseReleaseEvent(self, event):
-        self.drag_position = None
-        event.accept()
-
-        
-    def setupSearchTabButtons(self):
-        """Setup the button delegate for the Search Tab column"""
-        # For each table view in the tabs widget
-        from PyQt5.QtWidgets import QStyledItemDelegate, QStyle
-        from PyQt5.QtCore import QEvent, Qt
-        from PyQt5.QtGui import QColor
-        
-        # Store a reference to the main window
-        main_window = self
-        
-        for i in range(self.tabs_widget.count()):
-            tab_widget = self.tabs_widget.widget(i)
-            if isinstance(tab_widget, QTableView):
-                proxy_model = tab_widget.model()
-                source_model = proxy_model.sourceModel()
-                
-                # Connect signal from model to handler
-                source_model.searchTabRequested.connect(self.searchTabOnline)
-                
-                # Add button delegate to the Search Tab column
-                class ButtonDelegate(QStyledItemDelegate):
-                    def __init__(self, parent=None):
-                        super().__init__(parent)
-                    
-                    def paint(self, painter, option, index):
-                        # Draw a button with "Open Online" text
-                        painter.save()
-                        
-                        # Set color and style similar to the Add Tabs button
-                        if option.state & QStyle.State_MouseOver:
-                            bg_color = QColor("#eaa13f")  # Hover color
-                        else:
-                            bg_color = QColor("#e3ac63")  # Normal color
-                        
-                        # Draw button background
-                        painter.setPen(Qt.NoPen)
-                        painter.setBrush(bg_color)
-                        painter.drawRoundedRect(option.rect.adjusted(2, 2, -2, -2), 4, 4)
-                        
-                        # Draw button text
-                        painter.setPen(QColor("#000000"))
-                        text_rect = option.rect.adjusted(4, 4, -4, -4)
-                        painter.drawText(text_rect, Qt.AlignCenter, "Open")
-                        
-                        
-                        painter.restore()
-                    
-                    def editorEvent(self, event, model, option, index):
-                        if event.type() == QEvent.MouseButtonRelease:
-                            # Get band and title data
-                            proxy_model = model
-                            source_model = proxy_model.sourceModel()
-                            source_index = proxy_model.mapToSource(index)
-                            source_row = source_index.row()
-                            
-                            band = source_model._data[source_row][1]  # Band column (index 1)
-                            title = source_model._data[source_row][3]  # Title column (index 3)
-                            
-                            # Use the main window reference to call searchTabOnline
-                            main_window.searchTabOnline(band, title)
-                            return True
-                        
-                        return super().editorEvent(event, model, option, index)
-                
-                # Try to get the Search Tab column index
-                try:
-                    search_col_idx = source_model.columns.index("Ultimate Guitar")
-                    
-                    # Set the delegate for the column
-                    tab_widget.setItemDelegateForColumn(
-                        search_col_idx, ButtonDelegate(tab_widget))
-                    
-                    # Make the column a reasonable width for the text
-                    tab_widget.setColumnWidth(search_col_idx, 100)
-                except ValueError:
-                    # If "Ultimate Guitar" is not in columns, quietly skip
-                    pass
-
-    # This code should replace the searchTabOnline method in the GuitarTabsApp class
-
-    def searchTabOnline(self, band, title):
-        """Search for a guitar tab online"""
-        try:
-            # Format the search query
-            query = f"{band} {title}"
-            encoded_query = urllib.parse.quote(query)
-            
-            # Construct the Ultimate Guitar search URL
-            url = f"https://www.ultimate-guitar.com/search.php?search_type=title&value={encoded_query}"
-            
-            # Open in default browser
-            webbrowser.open(url)
-            
-            # Update status bar
-            self.statusBar().showMessage(f"Searching for '{band} - {title}' on Ultimate Guitar...")
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self.statusBar().showMessage(f"Error searching for tab: {str(e)}")
-
+    # ------------------------------------------------------------------
+    # Pitch Shifter
+    # ------------------------------------------------------------------
     def show_pitch_shifter(self):
-        """Show the pitch shifter dialog"""
         dialog = PitchShifterDialog(self.db_manager, self)
         dialog.exec_()
 
-            
+    # ------------------------------------------------------------------
+    # Custom title bar  (drag logic lives here, NOT on main window)
+    # ------------------------------------------------------------------
+    def setupCustomTitleBar(self):
+        self.setWindowFlags(Qt.FramelessWindowHint)
+
+        title_bar = QWidget()
+        title_bar.setFixedHeight(40)
+        title_bar.setStyleSheet("background-color: #3a3a3a;")
+
+        layout = QHBoxLayout(title_bar)
+        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(5)
+
+        title_label = QLabel("Guitar Tabs Collection Manager")
+        title_label.setStyleSheet("color: white; font-weight: bold;")
+        layout.addWidget(title_label)
+        layout.addStretch()
+
+        btn_style = """
+QPushButton {
+    background-color: transparent; color: white; border: none;
+    font-size: 16px; font-family: Arial; padding: 0; margin: 0;
+}
+QPushButton:hover { background-color: #555555; }
+"""
+        min_btn = QPushButton("_")
+        min_btn.setFixedSize(30, 30)
+        min_btn.setStyleSheet(btn_style)
+        min_btn.clicked.connect(self.showMinimized)
+
+        max_btn = QPushButton("□")
+        max_btn.setFixedSize(30, 30)
+        max_btn.setStyleSheet(btn_style)
+        max_btn.clicked.connect(self.toggleMaximized)
+
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(30, 30)
+        close_btn.setStyleSheet(btn_style + "QPushButton:hover { background-color: #E81123; }")
+        close_btn.clicked.connect(self.close)
+
+        layout.addWidget(min_btn)
+        layout.addWidget(max_btn)
+        layout.addWidget(close_btn)
+
+        self.centralWidget().layout().insertWidget(0, title_bar)
+
+        # Title bar drag — only the title bar moves the window
+        title_bar.mousePressEvent = self._tb_mouse_press
+        title_bar.mouseMoveEvent = self._tb_mouse_move
+        title_bar.mouseReleaseEvent = self._tb_mouse_release
+
+    def toggleMaximized(self):
+        self.showNormal() if self.isMaximized() else self.showMaximized()
+
+    def _tb_mouse_press(self, event):
+        if event.button() == Qt.LeftButton:
+            self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def _tb_mouse_move(self, event):
+        if event.buttons() == Qt.LeftButton and self.drag_position is not None:
+            self.move(event.globalPos() - self.drag_position)
+            event.accept()
+
+    def _tb_mouse_release(self, event):
+        self.drag_position = None
+        event.accept()
