@@ -1,8 +1,16 @@
 import sys
+import os
 import traceback
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtGui import QIcon
+from PyQt5.QtWidgets import QApplication, QSplashScreen
+from PyQt5.QtGui import QIcon, QPixmap
+from PyQt5.QtCore import Qt, QTimer
 from guitar_tabs_app import GuitarTabApp  # Fixed: was GuitarTabsApp
+
+
+def resource_path(relative):
+    """Return correct path whether running as script or frozen .exe."""
+    base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative)
 
 
 def main():
@@ -106,6 +114,13 @@ def main():
     """)
 
     try:
+        # Splash screen — shown for 3 seconds before the main window appears
+        splash_pix = QPixmap(resource_path("logo.png"))
+        splash = QSplashScreen(splash_pix, Qt.WindowStaysOnTopHint)
+        splash.setWindowFlag(Qt.FramelessWindowHint)
+        splash.show()
+        app.processEvents()
+
         window = GuitarTabApp()
 
         # Set object names for styling
@@ -113,7 +128,7 @@ def main():
         window.learned_tabs_btn.setObjectName("learned_tabs_btn")
         window.pitch_shifter_btn.setObjectName("pitch_shifter_btn")
 
-        window.show()
+        QTimer.singleShot(3000, lambda: (splash.finish(window), window.show()))
         sys.exit(app.exec_())
     except Exception as e:
         traceback.print_exc()
