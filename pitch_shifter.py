@@ -1,5 +1,6 @@
+import traceback
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QComboBox,
-                             QLabel, QPushButton, QFormLayout, QGroupBox, 
+                             QLabel, QPushButton, QFormLayout, QGroupBox,
                              QTableWidget, QTableWidgetItem, QHeaderView, QRadioButton,
                              QButtonGroup, QMessageBox, QSizePolicy, QInputDialog,
                              QMenu, QAction)
@@ -456,9 +457,6 @@ class PitchShifterDialog(QDialog):
                 # Calculate semitone difference using chromatic scale
                 semitone_diff = self.calculate_semitone_difference(current_note, target_note)
                 
-                # Debugging: Print before adjustment
-                print(f"String {num_strings-i}: {current_note} → {target_note}, initial diff: {semitone_diff}, direction: {tuning_direction}")
-                
                 # Force the direction based on our tuning_direction
                 # For a given tuning change, all strings MUST move in the same direction
                 if tuning_direction < 0:  # Tuning DOWN
@@ -482,9 +480,6 @@ class PitchShifterDialog(QDialog):
                 if current_note == "E" and target_note == "A#" and semitone_diff > 0:
                     semitone_diff -= 12
                     
-                # Print after adjustment
-                print(f"String {num_strings-i}: after adjustment: {semitone_diff}")
-                
                 pitch_shifts.append(semitone_diff)
                 
                 # String number (6 is lowest/thickest, 1 is highest/thinnest for 6-string)
@@ -525,8 +520,7 @@ class PitchShifterDialog(QDialog):
             # Generate summary
             self.generate_summary(pitch_shifts, special_strings)
             
-        except Exception as e:
-            import traceback
+        except Exception:
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Error calculating pitch shift: {str(e)}")
     

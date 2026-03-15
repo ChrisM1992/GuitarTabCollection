@@ -1,5 +1,4 @@
 import sqlite3
-import pandas as pd
 from datetime import datetime
 
 
@@ -359,6 +358,26 @@ class DatabaseManager:
         conn.close()
         return result
 
+    def update_tuning(self, old_name, new_name, is_seven_string):
+        """Rename a tuning entry in the tunings table."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE tunings SET name = ?, is_seven_string = ? WHERE name = ?",
+                (new_name, 1 if is_seven_string else 0, old_name)
+            )
+            cursor.execute(
+                "UPDATE tabs SET tuning = ? WHERE tuning = ?",
+                (new_name, old_name)
+            )
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
+
     def mark_as_learned(self, tab_id):
         """Alias for add_to_learned used by the import logic."""
         return self.add_to_learned(tab_id)
@@ -428,53 +447,4 @@ class DatabaseManager:
         finally:
             conn.close()
 
-    def is_tab_learned(self, tab_id):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id FROM learned_tabs WHERE tab_id = ?", (tab_id,))
-        result = cursor.fetchone() is not None
-        conn.close()
-        return result
 
-    # ------------------------------------------------------------------
-    # Excel import (legacy)
-    # ------------------------------------------------------------------
-    def import_from_excel(self, excel_path):
-        try:
-            excel_file = pd.ExcelFile(excel_path)
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            for sheet_name in excel_file.sheet_names:
-                df = excel_file.parse(sheet_name)
-                cursor.execute("SELECT id FROM bands WHERE name = ?", (sheet_name,))
-                result = cursor.fetchone()
-                band_id = result[0] if result else None
-                if not band_id:
-                    cursor.execute("INSERT INTO bands (name) VALUES (?)", (sheet_name,))
-                    band_id = cursor.lastrowid
-                for _, row in df.iterrows():
-                    try:
-                        album  = row.get('Album Name', '')
-                        title  = row.get('Title', '')
-                        tuning = row.get('Tuning', '')
-                        rating = row.get('Rating', 1)
-                        genre  = row.get('Genre', '')
-                        is_seven = row.get('Is7String', False)
-                        cursor.execute("SELECT id FROM tunings WHERE name = ?", (tuning,))
-                        if not cursor.fetchone():
-                            cursor.execute(
-                                "INSERT INTO tunings (name, is_seven_string) VALUES (?, ?)",
-                                (tuning, 1 if is_seven else 0)
-                            )
-                        cursor.execute('''
-                            INSERT INTO tabs (band_id, album, title, tuning, rating, genre, notes)
-                            VALUES (?, ?, ?, ?, ?, ?, '')
-                        ''', (band_id, album, title, tuning, rating, genre))
-                    except Exception as e:
-                        print(f"Row import error: {e}")
-            conn.commit()
-            conn.close()
-            return True
-        except Exception as e:
-            print(f"Excel import error: {e}")
-            return False
