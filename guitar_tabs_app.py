@@ -13,10 +13,29 @@ from PyQt5.QtWidgets import (
     QMainWindow, QTableView, QVBoxLayout, QHBoxLayout, QWidget,
     QPushButton, QComboBox, QLabel, QLineEdit, QHeaderView, QTabWidget,
     QMessageBox, QFileDialog, QDialog, QFormLayout, QDialogButtonBox,
-    QMenu, QSizePolicy, QStyledItemDelegate, QShortcut
+    QMenu, QStyledItemDelegate, QShortcut
 )
 from PyQt5.QtCore import Qt, QSortFilterProxyModel, QItemSelectionModel, QEvent, QPoint
-from PyQt5.QtGui import QColor, QKeySequence, QFont
+from PyQt5.QtGui import QColor, QKeySequence, QFont, QIcon, QPixmap, QImage
+
+def _resource_path(relative):
+    base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, relative)
+
+def _load_icon_white(relative, size=28):
+    """Load a black-on-white PNG icon and return it recoloured white on transparent."""
+    img = QImage(_resource_path(relative)).scaled(
+        size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation
+    ).convertToFormat(QImage.Format_ARGB32)
+    for y in range(img.height()):
+        for x in range(img.width()):
+            c = img.pixelColor(x, y)
+            if (c.red() + c.green() + c.blue()) // 3 < 128:
+                img.setPixelColor(x, y, QColor(255, 255, 255, 255))
+            else:
+                img.setPixelColor(x, y, QColor(0, 0, 0, 0))
+    return QIcon(QPixmap.fromImage(img))
+
 
 from tabs_data_model import TabsDataModel
 from database_manager import DatabaseManager
@@ -353,29 +372,28 @@ QPushButton:checked {
         # Action buttons (right side)
         action_layout = QHBoxLayout()
 
-        self.add_tab_btn = QPushButton("Tab +")
-        font = self.add_tab_btn.font()
-        font.setBold(True)
-        font.setPointSize(font.pointSize() + 1)
-        self.add_tab_btn.setFont(font)
+        self.add_tab_btn = QPushButton()
+        self.add_tab_btn.setIcon(_load_icon_white("Images/Icons/plus.png", 22))
+        self.add_tab_btn.setIconSize(self.add_tab_btn.sizeHint())
+        self.add_tab_btn.setFixedSize(36, 32)
+        self.add_tab_btn.setToolTip("Add Tab")
         self.add_tab_btn.setStyleSheet(
-            "QPushButton { background: transparent; color: white; border: none; padding: 4px 10px; }"
-            "QPushButton:hover { color: #e3ac63; }"
+            "QPushButton { background: transparent; border: none; padding: 4px; }"
+            "QPushButton:hover { background: #3a3a3e; border-radius: 4px; }"
         )
-        self.add_tab_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.add_tab_btn.clicked.connect(self.show_add_dialog)
         action_layout.addWidget(self.add_tab_btn)
 
-        action_layout.addSpacing(6)
+        action_layout.addSpacing(4)
 
-        self.menu_btn = QPushButton("☰")
-        mfont = self.menu_btn.font()
-        mfont.setPointSize(mfont.pointSize() + 3)
-        self.menu_btn.setFont(mfont)
-        self.menu_btn.setFixedSize(36, 30)
+        self.menu_btn = QPushButton()
+        self.menu_btn.setIcon(_load_icon_white("Images/Icons/burgericon.png", 22))
+        self.menu_btn.setIconSize(self.menu_btn.sizeHint())
+        self.menu_btn.setFixedSize(36, 32)
+        self.menu_btn.setToolTip("Menu")
         self.menu_btn.setStyleSheet(
-            "QPushButton { background: transparent; color: white; border: none; }"
-            "QPushButton:hover { color: #e3ac63; }"
+            "QPushButton { background: transparent; border: none; padding: 4px; }"
+            "QPushButton:hover { background: #3a3a3e; border-radius: 4px; }"
         )
         self.menu_btn.clicked.connect(self._show_hamburger_menu)
         action_layout.addWidget(self.menu_btn)

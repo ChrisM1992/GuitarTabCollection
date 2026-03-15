@@ -95,12 +95,24 @@ def main():
             selection-background-color: #0078d7;
         }
         QMenu {
-            background-color: #333337;
+            background-color: #2b2b2e;
             color: #e0e0e0;
-            border: 1px solid #3e3e42;
+            border: 1px solid #4a4a4f;
+            font-family: "Segoe UI";
+            font-size: 11pt;
+            padding: 4px 0px;
+        }
+        QMenu::item {
+            padding: 7px 28px 7px 16px;
         }
         QMenu::item:selected {
             background-color: #0078d7;
+            border-radius: 3px;
+        }
+        QMenu::separator {
+            height: 1px;
+            background: #4a4a4f;
+            margin: 4px 8px;
         }
 
         /* Pitch Shifter button */
