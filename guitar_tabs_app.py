@@ -250,6 +250,28 @@ class CustomProxyModel(QSortFilterProxyModel):
 
         return True
 
+    def lessThan(self, left, right):
+        src = self.sourceModel()
+        sort_col = self.sortColumn()
+
+        def cell(row, col):
+            return (src.data(src.index(row, col), Qt.DisplayRole) or "").lower()
+
+        # Primary: whichever column the header was clicked
+        lv, rv = cell(left.row(), sort_col), cell(right.row(), sort_col)
+        if lv != rv:
+            return lv < rv
+
+        # Tiebreakers: Band → Album → Title
+        for col in (1, 2, 3):
+            if col == sort_col:
+                continue
+            lv, rv = cell(left.row(), col), cell(right.row(), col)
+            if lv != rv:
+                return lv < rv
+
+        return False
+
 
 # ---------------------------------------------------------------------------
 # Main window
@@ -438,6 +460,7 @@ QPushButton:checked {
         proxy.setSourceModel(model)
         proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
         table.setModel(proxy)
+        proxy.sort(1, Qt.AscendingOrder)
 
         header = table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Stretch)
