@@ -104,6 +104,7 @@ class AddTabDialog(QDialog):
 
         # ── Band ──────────────────────────────────────────────────────
         self.band_combo = QComboBox()
+        self.band_combo.setStyleSheet("QComboBox { combobox-popup: 0; }")
         self.band_combo.setMaxVisibleItems(15)
         self.band_combo.addItems(["-- New Band --"] + sorted(bands))
         self.band_combo.currentTextChanged.connect(self.onBandChanged)
