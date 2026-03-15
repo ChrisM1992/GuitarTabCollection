@@ -16,6 +16,10 @@ class TabsDataModel(QAbstractTableModel):
         if "Ultimate Guitar" not in self.columns:
             self.columns.append("Ultimate Guitar")
 
+    def get_row(self, n):
+        """Public accessor for a data row — avoids direct _data access by callers."""
+        return self._data[n]
+
     # ------------------------------------------------------------------
     def rowCount(self, parent=QModelIndex()):
         return len(self._data)

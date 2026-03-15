@@ -1,7 +1,9 @@
 import os
 import sys
+import re
 import csv
 import io
+import json
 import zipfile
 import shutil
 import traceback
@@ -16,7 +18,7 @@ from PyQt5.QtWidgets import (
     QMenu, QStyledItemDelegate, QShortcut
 )
 from PyQt5.QtCore import Qt, QSortFilterProxyModel, QItemSelectionModel, QEvent, QPoint
-from PyQt5.QtGui import QColor, QKeySequence, QFont, QIcon, QPixmap, QImage, QPainter
+from PyQt5.QtGui import QColor, QKeySequence, QFont, QIcon, QPixmap, QPainter
 from PyQt5.QtSvg import QSvgRenderer
 
 def _resource_path(relative):
@@ -24,27 +26,36 @@ def _resource_path(relative):
     return os.path.join(base, relative)
 
 def _load_icon_white(relative, size=28):
-    """Load a PNG or SVG icon and return it recoloured white on transparent."""
+    """Load a PNG or SVG icon recoloured white on transparent — no pixel loops."""
     path = _resource_path(relative)
+    px = QPixmap(size, size)
+    px.fill(Qt.transparent)
+    painter = QPainter(px)
     if relative.lower().endswith('.svg'):
-        px = QPixmap(size, size)
-        px.fill(Qt.transparent)
-        painter = QPainter(px)
-        QSvgRenderer(path).render(painter)
-        painter.end()
-        img = px.toImage().convertToFormat(QImage.Format_ARGB32)
+        # Recolour SVG in-memory: dark fills → white, light fills → none (transparent)
+        with open(path, 'r', encoding='utf-8') as f:
+            svg = f.read()
+        def _replace_fill(m):
+            color = m.group(1).lower().strip()
+            if color in ('none', 'transparent', 'currentcolor'):
+                return m.group(0)
+            try:
+                c = color.lstrip('#')
+                if len(c) == 3:
+                    c = ''.join(x * 2 for x in c)
+                r, g, b = int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+                return 'fill="white"' if (r + g + b) // 3 < 128 else 'fill="none"'
+            except Exception:
+                return m.group(0)
+        svg = re.sub(r'fill="([^"]+)"', _replace_fill, svg)
+        QSvgRenderer(bytearray(svg.encode('utf-8'))).render(painter)
     else:
-        img = QImage(path).scaled(
-            size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation
-        ).convertToFormat(QImage.Format_ARGB32)
-    for y in range(img.height()):
-        for x in range(img.width()):
-            c = img.pixelColor(x, y)
-            if c.alpha() > 200 and (c.red() + c.green() + c.blue()) // 3 < 128:
-                img.setPixelColor(x, y, QColor(255, 255, 255, 255))
-            else:
-                img.setPixelColor(x, y, QColor(0, 0, 0, 0))
-    return QIcon(QPixmap.fromImage(img))
+        src = QPixmap(path).scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        painter.drawPixmap(0, 0, src)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        painter.fillRect(px.rect(), QColor(255, 255, 255))
+    painter.end()
+    return QIcon(px)
 
 
 from tabs_data_model import TabsDataModel
@@ -77,8 +88,8 @@ class UltimateGuitarDelegate(QStyledItemDelegate):
         if event.type() == QEvent.MouseButtonRelease:
             source_model = model.sourceModel()
             source_row = model.mapToSource(index).row()
-            band  = source_model._data[source_row][1]
-            title = source_model._data[source_row][3]
+            band  = source_model.get_row(source_row)[1]
+            title = source_model.get_row(source_row)[3]
             self._main_window.searchTabOnline(band, title)
             return True
         return super().editorEvent(event, model, option, index)
@@ -109,7 +120,7 @@ class StarRatingDelegate(QStyledItemDelegate):
         try:
             source_model = index.model().sourceModel()
             source_row   = index.model().mapToSource(index).row()
-            rating = int(source_model._data[source_row][5])
+            rating = int(source_model.get_row(source_row)[5])
         except Exception:
             rating = 0
 
@@ -134,7 +145,7 @@ class StarRatingDelegate(QStyledItemDelegate):
         if event.type() == QEvent.MouseButtonRelease:
             source_model = model.sourceModel()
             source_row   = model.mapToSource(index).row()
-            tab_id       = source_model._data[source_row][0]
+            tab_id       = source_model.get_row(source_row)[0]
 
             x         = event.pos().x() - option.rect.x()
             star_w    = option.rect.width() / 5
@@ -262,7 +273,7 @@ class CustomProxyModel(QSortFilterProxyModel):
         if not super().filterAcceptsRow(source_row, source_parent):
             return False
 
-        row = self.sourceModel()._data[source_row]
+        row = self.sourceModel().get_row(source_row)
 
         if self.min_rating > 0:
             try:
@@ -681,7 +692,10 @@ QPushButton:checked {
                 )
 
             menu.addSeparator()
-            edit_action       = menu.addAction("Edit Tab" if n == 1 else f"Edit {n} Tabs (one at a time)")
+            edit_action = menu.addAction("Edit Tab")
+            if n > 1:
+                edit_action.setEnabled(False)
+                edit_action.setToolTip("Select a single tab to edit")
             set_rating_action = menu.addAction(f"Set Rating for {n} Tabs" if n > 1 else "Set Rating")
             delete_action     = menu.addAction(f"Delete {n} Tab(s)" if n > 1 else "Delete Tab")
 
@@ -723,7 +737,7 @@ QPushButton:checked {
 
             proxy      = current_tab.model()
             source_row = proxy.mapToSource(selected_rows[0]).row()
-            row_data   = proxy.sourceModel()._data[source_row]
+            row_data   = proxy.sourceModel().get_row(source_row)
 
             # All tabs:    (id, band, album, title, tuning, rating, genre, notes)
             # Learned tabs:(id, band, album, title, tuning, rating, genre, notes, learned_date)
@@ -789,7 +803,7 @@ QPushButton:checked {
 
             for proxy_index in selected_rows:
                 source_row = proxy.mapToSource(proxy_index).row()
-                tab_id     = source_model._data[source_row][0]
+                tab_id     = source_model.get_row(source_row)[0]
                 try:
                     self.db_manager.update_rating(tab_id, new_rating)
                     updated += 1
@@ -821,9 +835,9 @@ QPushButton:checked {
             source_model = proxy.sourceModel()
             source_row   = proxy.mapToSource(idx).row()
             if len(indices) == 1:
-                tab_title = source_model._data[source_row][3]
+                tab_title = source_model.get_row(source_row)[3]
             try:
-                if self.db_manager.add_to_learned(source_model._data[source_row][0]):
+                if self.db_manager.add_to_learned(source_model.get_row(source_row)[0]):
                     added += 1
                 else:
                     already += 1
@@ -855,9 +869,9 @@ QPushButton:checked {
 
         for idx in indices:
             source_row = proxy.mapToSource(idx).row()
-            last_title = source_model._data[source_row][3]
+            last_title = source_model.get_row(source_row)[3]
             try:
-                self.db_manager.remove_from_learned(source_model._data[source_row][0])
+                self.db_manager.remove_from_learned(source_model.get_row(source_row)[0])
                 removed += 1
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to remove from learned: {e}")
@@ -896,8 +910,8 @@ QPushButton:checked {
 
             for pi in sorted(selected_rows, key=lambda x: x.row(), reverse=True):
                 si = proxy.mapToSource(pi)
-                if si.isValid() and 0 <= si.row() < len(source_model._data):
-                    tab_ids.append(source_model._data[si.row()][0])
+                if si.isValid() and 0 <= si.row() < source_model.rowCount():
+                    tab_ids.append(source_model.get_row(si.row())[0])
 
             deleted = 0
             for tab_id in tab_ids:
@@ -1008,7 +1022,6 @@ QPushButton:checked {
     # Settings — load / save / dialog
     # ------------------------------------------------------------------
     def _load_settings(self):
-        import json
         defaults = {'band_tab_threshold': 5}
         try:
             with open(self.settings_path, 'r', encoding='utf-8') as f:
@@ -1019,7 +1032,6 @@ QPushButton:checked {
         return defaults
 
     def _save_settings(self):
-        import json
         with open(self.settings_path, 'w', encoding='utf-8') as f:
             json.dump(self._settings, f, indent=2)
 
