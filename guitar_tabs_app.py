@@ -322,8 +322,10 @@ class GuitarTabApp(QMainWindow):
             app_dir = os.path.dirname(sys.executable)
         else:
             app_dir = os.path.dirname(os.path.abspath(__file__))
-        self.db_path    = os.path.join(app_dir, "guitar_tabs.db")
-        self.db_manager = DatabaseManager(self.db_path)
+        self.db_path      = os.path.join(app_dir, "guitar_tabs.db")
+        self.settings_path = os.path.join(app_dir, "settings.json")
+        self.db_manager   = DatabaseManager(self.db_path)
+        self._settings    = self._load_settings()
 
         try:
             self.db_manager.clean_up_empty_bands()
@@ -546,7 +548,7 @@ QPushButton:checked {
 
         for band_id, band_name in bands:
             band_tabs = self.db_manager.get_tabs_for_band(band_id)
-            if len(band_tabs) < 5:
+            if len(band_tabs) < self._settings['band_tab_threshold']:
                 general_tabs.extend(band_tabs)
                 bands_with_few.add(band_name)
             elif band_tabs:
@@ -554,7 +556,7 @@ QPushButton:checked {
 
         if general_tabs:
             t = self._build_table_view(general_tabs, columns)
-            t.setToolTip(f"Bands with fewer than 5 songs: {', '.join(sorted(bands_with_few))}")
+            t.setToolTip(f"Bands with fewer than {self._settings['band_tab_threshold']} songs: {', '.join(sorted(bands_with_few))}")
             self.tabs_widget.insertTab(1, t, "General")
 
     def _load_learned_tabs_view(self):
@@ -587,7 +589,7 @@ QPushButton:checked {
             band_map.setdefault(tab[1], []).append(tab)
 
         for band_name, tabs in band_map.items():
-            if len(tabs) < 5:
+            if len(tabs) < self._settings['band_tab_threshold']:
                 general.extend(tabs)
                 bands_with_few.add(band_name)
             else:
@@ -596,7 +598,7 @@ QPushButton:checked {
         if general:
             t = self._build_table_view(general, columns)
             t.setToolTip(
-                f"Bands with fewer than 5 learned songs: {', '.join(sorted(bands_with_few))}"
+                f"Bands with fewer than {self._settings['band_tab_threshold']} learned songs: {', '.join(sorted(bands_with_few))}"
             )
             self.tabs_widget.insertTab(1, t, "General")
 
@@ -1002,8 +1004,56 @@ QPushButton:checked {
 
         menu.exec_(self.menu_btn.mapToGlobal(QPoint(0, self.menu_btn.height())))
 
+    # ------------------------------------------------------------------
+    # Settings — load / save / dialog
+    # ------------------------------------------------------------------
+    def _load_settings(self):
+        import json
+        defaults = {'band_tab_threshold': 5}
+        try:
+            with open(self.settings_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                defaults.update(data)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+        return defaults
+
+    def _save_settings(self):
+        import json
+        with open(self.settings_path, 'w', encoding='utf-8') as f:
+            json.dump(self._settings, f, indent=2)
+
     def show_settings(self):
-        pass  # placeholder — functionality to be added later
+        from PyQt5.QtWidgets import QSpinBox
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Settings")
+        dlg.setMinimumWidth(340)
+        layout = QFormLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        spin = QSpinBox()
+        spin.setRange(1, 100)
+        spin.setValue(self._settings['band_tab_threshold'])
+        spin.setToolTip(
+            "A band gets its own tab when it has at least this many songs.\n"
+            "Bands below this number appear in the 'General' tab."
+        )
+        layout.addRow("Min songs for own tab:", spin)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addRow(buttons)
+
+        if dlg.exec_() == QDialog.Accepted:
+            self._settings['band_tab_threshold'] = spin.value()
+            self._save_settings()
+            self.load_data(preserve_tab=False)
+            self.statusBar().showMessage(
+                f"Settings saved — own tab from {spin.value()} songs"
+            )
 
     # ------------------------------------------------------------------
     # Import CSV  (single .csv or .zip bundle)
