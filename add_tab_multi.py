@@ -26,6 +26,7 @@ class BatchAddDialog(QDialog):
 
         # Artist selection
         self.band_combo = QComboBox()
+        self.band_combo.setMaxVisibleItems(15)
         self.band_combo.addItems(["-- New Band --"] + sorted(bands))
         self.band_combo.currentTextChanged.connect(self.onBandChanged)
         layout.addRow("Artist:", self.band_combo)
@@ -53,6 +54,7 @@ class BatchAddDialog(QDialog):
         # Tuning with dropdown and add/delete options
         tuning_layout = QHBoxLayout()
         self.tuning = QComboBox()
+        self.tuning.setMaxVisibleItems(15)
         self.tuning.addItems(self.standard_tunings)
         self.tuning.setEditable(True)
         self.tuning.setContextMenuPolicy(Qt.CustomContextMenu)

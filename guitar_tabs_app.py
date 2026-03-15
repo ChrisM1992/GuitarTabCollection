@@ -159,6 +159,7 @@ class AdvancedFilterDialog(QDialog):
         layout = QFormLayout(self)
 
         self.band_filter = QComboBox()
+        self.band_filter.setMaxVisibleItems(15)
         self.band_filter.addItem("Any")
         self.band_filter.addItems(sorted(bands))
         layout.addRow("Band:", self.band_filter)

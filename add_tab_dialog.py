@@ -104,6 +104,7 @@ class AddTabDialog(QDialog):
 
         # ── Band ──────────────────────────────────────────────────────
         self.band_combo = QComboBox()
+        self.band_combo.setMaxVisibleItems(15)
         self.band_combo.addItems(["-- New Band --"] + sorted(bands))
         self.band_combo.currentTextChanged.connect(self.onBandChanged)
         layout.addRow("Band:", self.band_combo)
@@ -128,6 +129,7 @@ class AddTabDialog(QDialog):
         self.seven_string_check.stateChanged.connect(self.update_tunings)
 
         self.tuning = QComboBox()
+        self.tuning.setMaxVisibleItems(15)
         self.tuning.addItems(self.standard_tunings)
         self.tuning.setEditable(True)
         self.tuning.setContextMenuPolicy(Qt.CustomContextMenu)
