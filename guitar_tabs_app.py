@@ -352,16 +352,33 @@ QPushButton:checked {
 
         # Action buttons (right side)
         action_layout = QHBoxLayout()
-        for label, slot in [
-            ("Add New Tab",  self.show_add_dialog),
-            ("Add Multiple", self.show_batch_add_dialog),
-            ("Import",       self.show_import_menu),
-            ("Export",       self.show_export_menu),
-        ]:
-            btn = QPushButton(label)
-            btn.clicked.connect(slot)
-            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            action_layout.addWidget(btn)
+
+        self.add_tab_btn = QPushButton("Tab +")
+        font = self.add_tab_btn.font()
+        font.setBold(True)
+        font.setPointSize(font.pointSize() + 1)
+        self.add_tab_btn.setFont(font)
+        self.add_tab_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: white; border: none; padding: 4px 10px; }"
+            "QPushButton:hover { color: #e3ac63; }"
+        )
+        self.add_tab_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.add_tab_btn.clicked.connect(self.show_add_dialog)
+        action_layout.addWidget(self.add_tab_btn)
+
+        action_layout.addSpacing(6)
+
+        self.menu_btn = QPushButton("☰")
+        mfont = self.menu_btn.font()
+        mfont.setPointSize(mfont.pointSize() + 3)
+        self.menu_btn.setFont(mfont)
+        self.menu_btn.setFixedSize(36, 30)
+        self.menu_btn.setStyleSheet(
+            "QPushButton { background: transparent; color: white; border: none; }"
+            "QPushButton:hover { color: #e3ac63; }"
+        )
+        self.menu_btn.clicked.connect(self._show_hamburger_menu)
+        action_layout.addWidget(self.menu_btn)
 
         top_controls.addLayout(action_layout)
         main_layout.addLayout(top_controls)
@@ -937,21 +954,28 @@ QPushButton:checked {
                 QMessageBox.critical(self, "Error", f"Failed to add tabs: {e}")
 
     # ------------------------------------------------------------------
-    # Import / Export menus
+    # Hamburger menu
     # ------------------------------------------------------------------
-    def show_import_menu(self):
+    def _show_hamburger_menu(self):
         menu = QMenu(self)
-        menu.addAction("Import CSV", self.import_from_csv)
-        menu.addAction("Import DB",  self.import_database)
-        btn = self.sender()
-        menu.exec_(btn.mapToGlobal(QPoint(0, btn.height())))
+        menu.addAction("Add Multiple Tabs", self.show_batch_add_dialog)
+        menu.addSeparator()
 
-    def show_export_menu(self):
-        menu = QMenu(self)
-        menu.addAction("Export CSV", self.export_to_csv)
-        menu.addAction("Export DB",  self.backup_database)
-        btn = self.sender()
-        menu.exec_(btn.mapToGlobal(QPoint(0, btn.height())))
+        import_menu = menu.addMenu("Import")
+        import_menu.addAction("Import CSV", self.import_from_csv)
+        import_menu.addAction("Import DB",  self.import_database)
+
+        export_menu = menu.addMenu("Export")
+        export_menu.addAction("Export CSV", self.export_to_csv)
+        export_menu.addAction("Export DB",  self.backup_database)
+
+        menu.addSeparator()
+        menu.addAction("Settings", self.show_settings)
+
+        menu.exec_(self.menu_btn.mapToGlobal(QPoint(0, self.menu_btn.height())))
+
+    def show_settings(self):
+        pass  # placeholder — functionality to be added later
 
     # ------------------------------------------------------------------
     # Import CSV  (single .csv or .zip bundle)
