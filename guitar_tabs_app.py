@@ -16,21 +16,31 @@ from PyQt5.QtWidgets import (
     QMenu, QStyledItemDelegate, QShortcut
 )
 from PyQt5.QtCore import Qt, QSortFilterProxyModel, QItemSelectionModel, QEvent, QPoint
-from PyQt5.QtGui import QColor, QKeySequence, QFont, QIcon, QPixmap, QImage
+from PyQt5.QtGui import QColor, QKeySequence, QFont, QIcon, QPixmap, QImage, QPainter
+from PyQt5.QtSvg import QSvgRenderer
 
 def _resource_path(relative):
     base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base, relative)
 
 def _load_icon_white(relative, size=28):
-    """Load a black-on-white PNG icon and return it recoloured white on transparent."""
-    img = QImage(_resource_path(relative)).scaled(
-        size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation
-    ).convertToFormat(QImage.Format_ARGB32)
+    """Load a PNG or SVG icon and return it recoloured white on transparent."""
+    path = _resource_path(relative)
+    if relative.lower().endswith('.svg'):
+        px = QPixmap(size, size)
+        px.fill(Qt.transparent)
+        painter = QPainter(px)
+        QSvgRenderer(path).render(painter)
+        painter.end()
+        img = px.toImage().convertToFormat(QImage.Format_ARGB32)
+    else:
+        img = QImage(path).scaled(
+            size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        ).convertToFormat(QImage.Format_ARGB32)
     for y in range(img.height()):
         for x in range(img.width()):
             c = img.pixelColor(x, y)
-            if (c.red() + c.green() + c.blue()) // 3 < 128:
+            if c.alpha() > 200 and (c.red() + c.green() + c.blue()) // 3 < 128:
                 img.setPixelColor(x, y, QColor(255, 255, 255, 255))
             else:
                 img.setPixelColor(x, y, QColor(0, 0, 0, 0))
@@ -373,7 +383,7 @@ QPushButton:checked {
         action_layout = QHBoxLayout()
 
         self.add_tab_btn = QPushButton()
-        self.add_tab_btn.setIcon(_load_icon_white("Images/Icons/plus.png", 22))
+        self.add_tab_btn.setIcon(_load_icon_white("Images/Icons/plus.svg", 22))
         self.add_tab_btn.setIconSize(self.add_tab_btn.sizeHint())
         self.add_tab_btn.setFixedSize(36, 32)
         self.add_tab_btn.setToolTip("Add Tab")
@@ -387,7 +397,7 @@ QPushButton:checked {
         action_layout.addSpacing(4)
 
         self.menu_btn = QPushButton()
-        self.menu_btn.setIcon(_load_icon_white("Images/Icons/burgericon.png", 22))
+        self.menu_btn.setIcon(_load_icon_white("Images/Icons/menue.svg", 22))
         self.menu_btn.setIconSize(self.menu_btn.sizeHint())
         self.menu_btn.setFixedSize(36, 32)
         self.menu_btn.setToolTip("Menu")
