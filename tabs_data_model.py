@@ -13,8 +13,8 @@ class TabsDataModel(QAbstractTableModel):
         super().__init__()
         self._data = data if data is not None else []
         self.columns = list(columns) if columns is not None else []
-        if "Ultimate Guitar" not in self.columns:
-            self.columns.append("Ultimate Guitar")
+        if "Open with" not in self.columns:
+            self.columns.append("Open with")
 
     def get_row(self, n):
         """Public accessor for a data row — avoids direct _data access by callers."""
@@ -44,7 +44,7 @@ class TabsDataModel(QAbstractTableModel):
         col_name = self.columns[col]
 
         # ── Ultimate Guitar virtual column ────────────────────────────
-        if col_name == "Ultimate Guitar":
+        if col_name == "Open with":
             if role == Qt.DisplayRole:
                 return ""
             if role == Qt.TextAlignmentRole:
@@ -106,10 +106,10 @@ class TabsDataModel(QAbstractTableModel):
         ItemIsEditable is intentionally NOT set — this prevents Qt from
         opening a built-in inline editor on double-click.
         Custom editing is handled entirely by our delegate editorEvent()
-        methods (StarRatingDelegate, UltimateGuitarDelegate).
+        methods (StarRatingDelegate, OpenWithDelegate).
         """
         base = Qt.ItemIsEnabled | Qt.ItemIsSelectable
         col_name = self.columns[index.column()]
-        if col_name in ("Ultimate Guitar",):
+        if col_name in ("Open with",):
             return Qt.ItemIsEnabled  # not selectable either
         return base

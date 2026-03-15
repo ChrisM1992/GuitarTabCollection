@@ -431,6 +431,17 @@ class DatabaseManager:
         conn.close()
         return tabs
 
+    def get_all_genres(self):
+        """Return sorted list of distinct non-empty genre strings already in the DB."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT DISTINCT genre FROM tabs WHERE genre IS NOT NULL AND genre != '' ORDER BY genre"
+        )
+        genres = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return genres
+
     def update_learned_date(self, tab_id, date_str):
         """Update the learned date for a tab."""
         conn = sqlite3.connect(self.db_path)

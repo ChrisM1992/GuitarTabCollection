@@ -15,11 +15,13 @@ from PyQt5.QtWidgets import (
     QMainWindow, QTableView, QVBoxLayout, QHBoxLayout, QWidget,
     QPushButton, QComboBox, QLabel, QLineEdit, QHeaderView, QTabWidget,
     QMessageBox, QFileDialog, QDialog, QFormLayout, QDialogButtonBox,
-    QMenu, QStyledItemDelegate, QShortcut
+    QMenu, QStyledItemDelegate, QShortcut,
+    QSpinBox, QTableWidget, QTableWidgetItem, QProgressBar, QAbstractItemView, QFrame
 )
-from PyQt5.QtCore import Qt, QSortFilterProxyModel, QItemSelectionModel, QEvent, QPoint
+from PyQt5.QtCore import Qt, QSortFilterProxyModel, QItemSelectionModel, QEvent, QPoint, QTimer, QRect, QRectF
 from PyQt5.QtGui import QColor, QKeySequence, QFont, QIcon, QPixmap, QPainter
 from PyQt5.QtSvg import QSvgRenderer
+from title_checker import TitleChecker
 
 def _resource_path(relative):
     base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
@@ -66,32 +68,87 @@ from pitch_shifter import PitchShifterDialog
 
 
 # ---------------------------------------------------------------------------
-# Ultimate Guitar column delegate
+# "Open with" column delegate — UG + Spotify icon buttons
 # ---------------------------------------------------------------------------
-class UltimateGuitarDelegate(QStyledItemDelegate):
+_ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Images", "Icons")
+
+def _load_svg_renderer(filename):
+    path = os.path.join(_ICON_DIR, filename)
+    return QSvgRenderer(path) if os.path.exists(path) else None
+
+
+def _svg_to_icon(filename, size=18):
+    """Render an SVG from _ICON_DIR to a QIcon of the given pixel size."""
+    path = os.path.join(_ICON_DIR, filename)
+    if not os.path.exists(path):
+        return QIcon()
+    px = QPixmap(size, size)
+    px.fill(Qt.transparent)
+    p = QPainter(px)
+    QSvgRenderer(path).render(p, QRectF(0, 0, size, size))
+    p.end()
+    return QIcon(px)
+
+
+class OpenWithDelegate(QStyledItemDelegate):
+    """Draws two icon buttons (Ultimate Guitar | Spotify) inside a single cell."""
+
+    _UG_BG      = QColor("#e3ac63")
+    _UG_HOVER   = QColor("#eaa13f")
+    _SP_BG      = QColor("#1db954")
+    _SP_HOVER   = QColor("#1ed760")
+
+    # SVG renderers are shared across all instances (loaded once)
+    _ug_svg      = None
+    _spotify_svg = None
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
-        self._main_window = main_window
+        self._mw = main_window
+        if OpenWithDelegate._ug_svg is None:
+            OpenWithDelegate._ug_svg      = _load_svg_renderer("ultimate-guitar.svg")
+            OpenWithDelegate._spotify_svg = _load_svg_renderer("spotify-svgrepo-com.svg")
 
-    def paint(self, painter, option, index):
+    # ------------------------------------------------------------------
+    def _button_rects(self, cell_rect):
+        r   = cell_rect.adjusted(2, 2, -2, -2)
+        mid = r.left() + r.width() // 2 - 1
+        ug_r = QRect(r.left(), r.top(), mid - r.left(),      r.height())
+        sp_r = QRect(mid + 2,  r.top(), r.right() - mid - 2, r.height())
+        return ug_r, sp_r
+
+    def paint(self, painter, option, _index):
         painter.save()
-        bg = QColor("#eaa13f") if option.state & 0x2000 else QColor("#e3ac63")
+        ug_r, sp_r = self._button_rects(option.rect)
+
+        # UG button
         painter.setPen(Qt.NoPen)
-        painter.setBrush(bg)
-        painter.drawRoundedRect(option.rect.adjusted(2, 2, -2, -2), 4, 4)
-        painter.setPen(QColor("#000000"))
-        painter.drawText(option.rect.adjusted(4, 4, -4, -4), Qt.AlignCenter, "Open")
+        painter.setBrush(self._UG_BG)
+        painter.drawRoundedRect(ug_r, 4, 4)
+        if self._ug_svg:
+            self._ug_svg.render(painter, QRectF(ug_r.adjusted(3, 3, -3, -3)))
+
+        # Spotify button
+        painter.setBrush(self._SP_BG)
+        painter.drawRoundedRect(sp_r, 4, 4)
+        if self._spotify_svg:
+            self._spotify_svg.render(painter, QRectF(sp_r.adjusted(3, 3, -3, -3)))
+
         painter.restore()
 
     def editorEvent(self, event, model, option, index):
         if event.type() == QEvent.MouseButtonRelease:
+            ug_r, sp_r = self._button_rects(option.rect)
             source_model = model.sourceModel()
-            source_row = model.mapToSource(index).row()
+            source_row   = model.mapToSource(index).row()
             band  = source_model.get_row(source_row)[1]
             title = source_model.get_row(source_row)[3]
-            self._main_window.searchTabOnline(band, title)
-            return True
+            if ug_r.contains(event.pos()):
+                self._mw.searchTabOnline(band, title)
+                return True
+            if sp_r.contains(event.pos()):
+                self._mw.searchOnSpotify(band, title)
+                return True
         return super().editorEvent(event, model, option, index)
 
 
@@ -316,6 +373,218 @@ class CustomProxyModel(QSortFilterProxyModel):
 
 
 # ---------------------------------------------------------------------------
+# Bulk Checker Dialog
+# ---------------------------------------------------------------------------
+class BulkCheckerDialog(QDialog):
+    def __init__(self, db_manager, title_checker, parent=None):
+        super().__init__(parent)
+        self.db_manager = db_manager
+        self.checker    = title_checker
+        self.setWindowTitle("Bulk Tab Checker")
+        self.setMinimumSize(920, 580)
+        self._pending = []
+        self._active  = 0
+        self._total   = 0
+
+        layout = QVBoxLayout(self)
+
+        self._progress = QProgressBar()
+        self._progress.setTextVisible(True)
+        layout.addWidget(self._progress)
+
+        self._status = QLabel("Loading…")
+        layout.addWidget(self._status)
+
+        self._table = QTableWidget(0, 6)
+        self._table.setHorizontalHeaderLabels(
+            ["", "Band", "Current Title", "Suggested Title", "Current Album", "Suggested Album"]
+        )
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setColumnWidth(0, 32)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        layout.addWidget(self._table)
+
+        btn_row = QHBoxLayout()
+        self._apply_btn = QPushButton("Apply Selected")
+        self._apply_btn.setEnabled(False)
+        self._apply_btn.clicked.connect(self._apply_selected)
+        btn_row.addStretch()
+        btn_row.addWidget(self._apply_btn)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        QTimer.singleShot(0, self._start)
+
+    def _start(self):
+        tabs = self.db_manager.get_all_tabs()
+        self._total = len(tabs)
+        self._progress.setRange(0, self._total)
+        self._progress.setValue(0)
+        self._status.setText(f"Checking {self._total} tabs…")
+        # get_all_tabs returns: id, band, album, title, tuning, rating, genre, notes
+        for row in tabs:
+            tab_id, band, album, title = row[0], row[1], row[2], row[3]
+            self._pending.append((band, title, tab_id, album))
+        self._fill_workers()
+
+    def _fill_workers(self):
+        # MusicBrainz enforces 1 req/sec — run only one worker at a time
+        while self._active < 1 and self._pending:
+            band, title, tab_id, album = self._pending.pop(0)
+            self._active += 1
+            self.checker.check(
+                band, title, tab_id, "full",
+                lambda b, t, tid, d, al=album: self._on_result(b, t, tid, d, al)
+            )
+
+    def _on_result(self, band, title, tab_id, data, current_album):
+        self._active -= 1
+        done = self._total - len(self._pending) - self._active
+        self._progress.setValue(done)
+
+        sug_title = data.get('title', '')
+        sug_band  = data.get('band',  band)
+        sug_album = data.get('album', '')
+
+        title_diff = sug_title and sug_title.lower() != title.lower()
+        album_diff = (sug_album and
+                      sug_album.lower() != (current_album or '').lower())
+
+        if title_diff or album_diff:
+            r = self._table.rowCount()
+            self._table.insertRow(r)
+
+            chk = QTableWidgetItem()
+            chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            high_conf = bool(sug_title and title.lower() in sug_title.lower())
+            chk.setCheckState(Qt.Checked if high_conf else Qt.Unchecked)
+            self._table.setItem(r, 0, chk)
+
+            band_item = QTableWidgetItem(sug_band)
+            band_item.setData(Qt.UserRole, tab_id)
+            self._table.setItem(r, 1, band_item)
+            self._table.setItem(r, 2, QTableWidgetItem(title))
+            self._table.setItem(r, 3, QTableWidgetItem(sug_title or title))
+            self._table.setItem(r, 4, QTableWidgetItem(current_album or ''))
+            self._table.setItem(r, 5, QTableWidgetItem(sug_album or current_album or ''))
+            self._apply_btn.setEnabled(True)
+
+        self._fill_workers()
+
+        if not self._pending and self._active == 0:
+            self._status.setText(
+                f"Done — {self._table.rowCount()} suggestion(s) found out of {self._total} tabs"
+            )
+
+    def _apply_selected(self):
+        all_tabs = {t[0]: t for t in self.db_manager.get_all_tabs()}
+        applied  = 0
+        for row in range(self._table.rowCount()):
+            chk = self._table.item(row, 0)
+            if not (chk and chk.checkState() == Qt.Checked):
+                continue
+            tab_id = self._table.item(row, 1).data(Qt.UserRole)
+            if tab_id not in all_tabs:
+                continue
+            t = all_tabs[tab_id]
+            # t: id, band, album, title, tuning, rating, genre, notes
+            tab_data = {
+                "band":   self._table.item(row, 1).text(),
+                "album":  self._table.item(row, 5).text(),
+                "title":  self._table.item(row, 3).text(),
+                "tuning": t[4], "rating": t[5],
+                "genre":  t[6], "notes":  t[7],
+            }
+            try:
+                self.db_manager.update_tab(tab_id, tab_data)
+                applied += 1
+            except Exception as e:
+                print(f"Error updating tab {tab_id}: {e}")
+
+        if applied and hasattr(self.parent(), 'load_data'):
+            self.parent().load_data(preserve_tab=True)
+        QMessageBox.information(self, "Applied", f"Updated {applied} tab(s).")
+
+
+# ---------------------------------------------------------------------------
+# Non-modal suggestion bar  (slides in at bottom of main window)
+# ---------------------------------------------------------------------------
+class NonModalSuggestionBar(QFrame):
+    def __init__(self, band, title, tab_id, suggestion, db_manager, parent=None):
+        super().__init__(parent)
+        self._db_manager = db_manager
+        self._tab_id     = tab_id
+        self._suggestion = suggestion
+
+        self.setObjectName("suggestionBar")
+        self.setStyleSheet("""
+            QFrame#suggestionBar {
+                background-color: #1e3a5f;
+                border-top: 2px solid #4a7abf;
+            }
+            QLabel { color: #e0e0e0; background: transparent; }
+        """)
+        self.setFixedHeight(40)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 4, 8, 4)
+
+        parts = []
+        if suggestion.get('band') and suggestion['band'].lower() != band.lower():
+            parts.append(f"Band: <b>{suggestion['band']}</b>")
+        if suggestion.get('title') and suggestion['title'].lower() != title.lower():
+            parts.append(f"Title: <b>{suggestion['title']}</b>")
+        if suggestion.get('album'):
+            parts.append(f"Album: <b>{suggestion['album']}</b>")
+        if suggestion.get('tuning'):
+            parts.append(f"Tuning: <b>{suggestion['tuning']}</b>")
+
+        lbl = QLabel("Google suggests:  " + "  |  ".join(parts))
+        lbl.setTextFormat(Qt.RichText)
+        layout.addWidget(lbl)
+        layout.addStretch()
+
+        apply_btn = QPushButton("Apply")
+        apply_btn.setFixedWidth(70)
+        apply_btn.clicked.connect(self._apply)
+        layout.addWidget(apply_btn)
+
+        dismiss_btn = QPushButton("Dismiss")
+        dismiss_btn.setFixedWidth(70)
+        dismiss_btn.clicked.connect(self._dismiss)
+        layout.addWidget(dismiss_btn)
+
+    def _apply(self):
+        try:
+            all_tabs = {t[0]: t for t in self._db_manager.get_all_tabs()}
+            if self._tab_id in all_tabs:
+                t = all_tabs[self._tab_id]
+                tab_data = {
+                    "band":   self._suggestion.get('band',   t[1]),
+                    "album":  self._suggestion.get('album',  t[2]),
+                    "title":  self._suggestion.get('title',  t[3]),
+                    "tuning": self._suggestion.get('tuning', t[4]),
+                    "rating": t[5], "genre": t[6], "notes": t[7],
+                }
+                self._db_manager.update_tab(self._tab_id, tab_data)
+                if hasattr(self.parent(), 'load_data'):
+                    self.parent().load_data(preserve_tab=True)
+        except Exception as e:
+            print(f"Suggestion apply error: {e}")
+        self._dismiss()
+
+    def _dismiss(self):
+        cb = getattr(self, '_dismiss_callback', None)
+        if cb:
+            cb()
+        else:
+            self.hide()
+
+
+# ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
 class GuitarTabApp(QMainWindow):
@@ -337,6 +606,8 @@ class GuitarTabApp(QMainWindow):
         self.settings_path = os.path.join(app_dir, "settings.json")
         self.db_manager   = DatabaseManager(self.db_path)
         self._settings    = self._load_settings()
+        self._title_checker  = TitleChecker(self)
+        self._suggestion_bar = None
 
         try:
             self.db_manager.clean_up_empty_bands()
@@ -532,6 +803,10 @@ QPushButton:checked {
         except ValueError:
             pass
 
+        # Row height — 1.5× the default so rows are more readable
+        vh = table.verticalHeader()
+        vh.setDefaultSectionSize(int(vh.defaultSectionSize() * 1.5))
+
         table.hideColumn(0)
         table.setSortingEnabled(True)
         header.setSortIndicator(1, Qt.AscendingOrder)
@@ -547,7 +822,7 @@ QPushButton:checked {
         # data: (id, band, album, title, tuning, rating, genre, notes)
         columns = [
             "ID", "Band", "Album", "Title", "Tuning",
-            "Rating", "Genre", "Notes", "Ultimate Guitar"
+            "Rating", "Genre", "Notes", "Open with"
         ]
 
         all_tabs = self.db_manager.get_all_tabs()
@@ -574,7 +849,7 @@ QPushButton:checked {
         # data: (id, band, album, title, tuning, rating, genre, notes, learned_date)
         columns = [
             "ID", "Band", "Album", "Title", "Tuning",
-            "Rating", "Genre", "Notes", "Learned Date", "Ultimate Guitar"
+            "Rating", "Genre", "Notes", "Learned Date", "Open with"
         ]
         learned_tabs = self.db_manager.get_all_learned_tabs()
 
@@ -621,7 +896,7 @@ QPushButton:checked {
         # collecting them. PyQt5 does NOT keep a Python-side reference for
         # setItemDelegateForColumn(), so local variables get freed and Qt
         # would access dangling C++ pointers → access violation / app crash.
-        self._ug_delegate   = UltimateGuitarDelegate(self)
+        self._ug_delegate   = OpenWithDelegate(self)
         self._star_delegate = StarRatingDelegate(self)
 
         for i in range(self.tabs_widget.count()):
@@ -631,18 +906,17 @@ QPushButton:checked {
 
             source_model = table.model().sourceModel()
             try:
+                col = source_model.columns.index("Open with")
+                table.setItemDelegateForColumn(col, self._ug_delegate)
+                table.setColumnWidth(col, 80)
+                table.horizontalHeader().setSectionResizeMode(col, QHeaderView.Fixed)
+            except ValueError:
+                pass
+            try:
                 source_model.searchTabRequested.disconnect(self.searchTabOnline)
             except TypeError:
                 pass
             source_model.searchTabRequested.connect(self.searchTabOnline)
-
-            # Ultimate Guitar button column
-            try:
-                col = source_model.columns.index("Ultimate Guitar")
-                table.setItemDelegateForColumn(col, self._ug_delegate)
-                table.setColumnWidth(col, 100)
-            except ValueError:
-                pass
 
             # Inline star rating column
             try:
@@ -660,6 +934,14 @@ QPushButton:checked {
             self.statusBar().showMessage(f"Searching '{band} – {title}' on Ultimate Guitar…")
         except Exception as e:
             self.statusBar().showMessage(f"Error opening UG search: {e}")
+
+    def searchOnSpotify(self, band, title):
+        try:
+            encoded = urllib.parse.quote(f"{band} {title}")
+            webbrowser.open(f"https://open.spotify.com/search/{encoded}")
+            self.statusBar().showMessage(f"Searching '{band} – {title}' on Spotify…")
+        except Exception as e:
+            self.statusBar().showMessage(f"Error opening Spotify: {e}")
 
     # ------------------------------------------------------------------
     # Context menu
@@ -682,6 +964,22 @@ QPushButton:checked {
 
             menu = QMenu()
 
+            # ── Open with UG / Spotify (single row only) ──────────────
+            ug_action = sp_action = None
+            if n == 1:
+                proxy_idx    = selected_rows[0]
+                src_row      = current_tab.model().mapToSource(proxy_idx).row()
+                src_model    = current_tab.model().sourceModel()
+                _band  = src_model.get_row(src_row)[1]
+                _title = src_model.get_row(src_row)[3]
+                ug_action = menu.addAction(
+                    _svg_to_icon("ultimate-guitar.svg", 16), "Open on Ultimate Guitar"
+                )
+                sp_action = menu.addAction(
+                    _svg_to_icon("spotify-svgrepo-com.svg", 16), "Open on Spotify"
+                )
+                menu.addSeparator()
+
             if self.current_view == "all":
                 learned_action = menu.addAction(
                     f"Mark {n} as Learned" if n > 1 else "Mark as Learned"
@@ -703,7 +1001,11 @@ QPushButton:checked {
             if action is None:
                 return
 
-            if self.current_view == "all" and action == learned_action:
+            if action == ug_action and ug_action is not None:
+                self.searchTabOnline(_band, _title)
+            elif action == sp_action and sp_action is not None:
+                self.searchOnSpotify(_band, _title)
+            elif self.current_view == "all" and action == learned_action:
                 self.add_tab_to_learned(current_tab)
             elif self.current_view == "learned" and action == remove_action:
                 self.remove_from_learned(current_tab)
@@ -941,30 +1243,33 @@ QPushButton:checked {
     # Add dialogs
     # ------------------------------------------------------------------
     def show_add_dialog(self):
-        bands  = [b[1] for b in self.db_manager.get_all_bands()]
-        dialog = AddTabDialog(bands, self)
+        from add_tab_wizard import AddTabWizard
+        wizard = AddTabWizard(self.db_manager, self)
+        if wizard.exec_() != QDialog.Accepted:
+            return
 
-        if dialog.exec_() == QDialog.Accepted:
-            tab_data = dialog.getTabData()
-            if tab_data:
-                try:
-                    if self.db_manager.tab_exists(
-                        tab_data["band"], tab_data["album"], tab_data["title"]
-                    ):
-                        QMessageBox.warning(
-                            self, "Duplicate",
-                            f"'{tab_data['title']}' by '{tab_data['band']}' already exists."
-                        )
-                        return
-                    self.db_manager.add_tab(tab_data)
-                    self.load_data(preserve_tab=True)
-                    self.statusBar().showMessage(
-                        f"Added: {tab_data['title']} by {tab_data['band']}"
-                    )
-                except ValueError as ve:
-                    QMessageBox.warning(self, "Duplicate", str(ve))
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", f"Failed to add tab: {e}")
+        success = duplicate = error = 0
+        for tab_data in wizard.result_tabs:
+            try:
+                if self.db_manager.tab_exists(
+                    tab_data["band"], tab_data["album"], tab_data["title"]
+                ):
+                    duplicate += 1
+                    continue
+                self.db_manager.add_tab(tab_data)
+                success += 1
+            except ValueError:
+                duplicate += 1
+            except Exception as e:
+                error += 1
+                print(f"Error adding tab: {e}")
+
+        if success > 0:
+            self.load_data(preserve_tab=True)
+        msg = f"Added {success} tab(s)"
+        if duplicate: msg += f", {duplicate} duplicate(s) skipped"
+        if error:     msg += f", {error} error(s)"
+        self.statusBar().showMessage(msg)
 
     def show_batch_add_dialog(self):
         bands  = [b[1] for b in self.db_manager.get_all_bands()]
@@ -996,6 +1301,33 @@ QPushButton:checked {
 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to add tabs: {e}")
+
+    # ------------------------------------------------------------------
+    # Suggestion bar helpers
+    # ------------------------------------------------------------------
+    def _show_suggestion_bar(self, band, title, tab_id, suggestion):
+        self._dismiss_suggestion_bar()
+        bar = NonModalSuggestionBar(band, title, tab_id, suggestion, self.db_manager, self)
+        bar._dismiss_callback = self._dismiss_suggestion_bar
+        self._suggestion_bar = bar
+        self.centralWidget().layout().addWidget(bar)
+
+    def _dismiss_suggestion_bar(self):
+        if self._suggestion_bar:
+            self.centralWidget().layout().removeWidget(self._suggestion_bar)
+            self._suggestion_bar.deleteLater()
+            self._suggestion_bar = None
+
+    def _on_add_suggestion(self, band, title, tab_id, data):
+        if data:
+            self._show_suggestion_bar(band, title, tab_id, data)
+
+    # ------------------------------------------------------------------
+    # Bulk checker
+    # ------------------------------------------------------------------
+    def _open_bulk_checker(self):
+        dlg = BulkCheckerDialog(self.db_manager, self._title_checker, self)
+        dlg.exec_()
 
     # ------------------------------------------------------------------
     # Hamburger menu
@@ -1036,15 +1368,70 @@ QPushButton:checked {
             json.dump(self._settings, f, indent=2)
 
     def show_settings(self):
-        from PyQt5.QtWidgets import QSpinBox
+        from PyQt5.QtWidgets import QListWidget, QStackedWidget
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.setMinimumWidth(340)
-        layout = QFormLayout(dlg)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 20, 20, 20)
+        dlg.setMinimumSize(500, 320)
 
+        outer = QVBoxLayout(dlg)
+        outer.setSpacing(0)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        # ── Two-panel area ────────────────────────────────────────────
+        body = QHBoxLayout()
+        body.setSpacing(0)
+        body.setContentsMargins(0, 0, 0, 0)
+
+        # Left nav
+        nav = QListWidget()
+        nav.setFixedWidth(130)
+        nav.addItems(["General", "Database"])
+        nav.setCurrentRow(0)
+        nav.setStyleSheet("""
+            QListWidget {
+                background: #1c1c20;
+                border: none;
+                border-right: 1px solid #3a3a3e;
+                padding-top: 6px;
+                outline: none;
+            }
+            QListWidget::item {
+                padding: 10px 18px;
+                color: #bbbbbb;
+                border: none;
+            }
+            QListWidget::item:selected {
+                background: #2e2e34;
+                color: #ffffff;
+                border-left: 3px solid #e3ac63;
+                padding-left: 15px;
+            }
+        """)
+
+        # Right stacked content
+        stack = QStackedWidget()
+        stack.setStyleSheet("background: #26262b;")
+
+        # ── Page: General ─────────────────────────────────────────────
+        page_general = QWidget()
+        lay_gen = QVBoxLayout(page_general)
+        lay_gen.setContentsMargins(24, 20, 24, 20)
+        lay_gen.setSpacing(14)
+
+        lbl_gen = QLabel("General")
+        lbl_gen.setStyleSheet(
+            "color: #888888; font-weight: bold; font-size: 12px; letter-spacing: 1px;"
+        )
+        lay_gen.addWidget(lbl_gen)
+
+        sep_gen = QFrame()
+        sep_gen.setFrameShape(QFrame.HLine)
+        sep_gen.setStyleSheet("color: #3a3a3e;")
+        lay_gen.addWidget(sep_gen)
+
+        form_gen = QFormLayout()
+        form_gen.setSpacing(10)
         spin = QSpinBox()
         spin.setRange(1, 100)
         spin.setValue(self._settings['band_tab_threshold'])
@@ -1052,12 +1439,79 @@ QPushButton:checked {
             "A band gets its own tab when it has at least this many songs.\n"
             "Bands below this number appear in the 'General' tab."
         )
-        layout.addRow("Min songs for own tab:", spin)
+        form_gen.addRow("Min songs for own tab:", spin)
+        lay_gen.addLayout(form_gen)
+        lay_gen.addStretch()
 
+        # ── Page: Database ────────────────────────────────────────────
+        page_db = QWidget()
+        lay_db = QVBoxLayout(page_db)
+        lay_db.setContentsMargins(24, 20, 24, 20)
+        lay_db.setSpacing(10)
+
+        lbl_db = QLabel("Database")
+        lbl_db.setStyleSheet(
+            "color: #888888; font-weight: bold; font-size: 12px; letter-spacing: 1px;"
+        )
+        lay_db.addWidget(lbl_db)
+
+        sep_db = QFrame()
+        sep_db.setFrameShape(QFrame.HLine)
+        sep_db.setStyleSheet("color: #3a3a3e;")
+        lay_db.addWidget(sep_db)
+
+        n_tabs  = len(self.db_manager.get_all_tabs())
+        est_min = max(1, round(n_tabs * 1.1 / 60))
+
+        desc = QLabel(
+            "Compares every tab against MusicBrainz and suggests\n"
+            "corrections for title, band name, or album."
+        )
+        desc.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        lay_db.addWidget(desc)
+
+        check_btn = QPushButton("Check All Entries…")
+        check_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3a3a42;
+                color: #ffffff;
+                border: 1px solid #555560;
+                border-radius: 4px;
+                padding: 6px 14px;
+            }
+            QPushButton:hover  { background-color: #4a4a54; border-color: #888890; }
+            QPushButton:pressed { background-color: #2a2a30; }
+        """)
+        check_btn.setToolTip(
+            f"Queries MusicBrainz for all {n_tabs} tabs.\n"
+            f"Rate-limited to 1 req/sec — takes ~{est_min} min.\n"
+            "Progress is shown in the checker window."
+        )
+        check_btn.clicked.connect(self._open_bulk_checker)
+        lay_db.addWidget(check_btn)
+
+        warning = QLabel(f"⚠  {n_tabs} tab(s) queued — estimated ~{est_min} min")
+        warning.setStyleSheet("color: #e3ac63; font-size: 10px;")
+        lay_db.addWidget(warning)
+        lay_db.addStretch()
+
+        stack.addWidget(page_general)
+        stack.addWidget(page_db)
+        nav.currentRowChanged.connect(stack.setCurrentIndex)
+
+        body.addWidget(nav)
+        body.addWidget(stack, 1)
+        outer.addLayout(body, 1)
+
+        # ── Dialog buttons ────────────────────────────────────────────
+        btn_bar = QHBoxLayout()
+        btn_bar.setContentsMargins(12, 8, 12, 12)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
-        layout.addRow(buttons)
+        btn_bar.addStretch()
+        btn_bar.addWidget(buttons)
+        outer.addLayout(btn_bar)
 
         if dlg.exec_() == QDialog.Accepted:
             self._settings['band_tab_threshold'] = spin.value()
@@ -1413,5 +1867,5 @@ QPushButton:hover { background-color: #555555; }
         if event.buttons() == Qt.LeftButton and self.drag_position is not None:
             self.move(event.globalPos() - self.drag_position)
 
-    def _tb_mouse_release(self, event):
+    def _tb_mouse_release(self, _event):
         self.drag_position = None
