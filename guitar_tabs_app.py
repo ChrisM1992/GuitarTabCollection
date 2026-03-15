@@ -460,7 +460,6 @@ QPushButton:checked {
         proxy.setSourceModel(model)
         proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
         table.setModel(proxy)
-        proxy.sort(1, Qt.AscendingOrder)
 
         header = table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Stretch)
@@ -475,6 +474,8 @@ QPushButton:checked {
 
         table.hideColumn(0)
         table.setSortingEnabled(True)
+        header.setSortIndicator(1, Qt.AscendingOrder)
+        proxy.sort(1, Qt.AscendingOrder)
         table.setAlternatingRowColors(True)
         table.setSelectionBehavior(QTableView.SelectRows)
         table.setSelectionMode(QTableView.ExtendedSelection)
