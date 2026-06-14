@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QTableView, QVBoxLayout, QHBoxLayout, QWidget,
     QPushButton, QComboBox, QLabel, QLineEdit, QHeaderView, QTabWidget,
     QMessageBox, QFileDialog, QDialog, QFormLayout, QDialogButtonBox,
-    QMenu, QStyledItemDelegate, QShortcut,
+    QMenu, QStyledItemDelegate, QShortcut, QStyle,
     QSpinBox, QTableWidget, QTableWidgetItem, QProgressBar, QAbstractItemView, QFrame
 )
 from PyQt5.QtCore import Qt, QSortFilterProxyModel, QItemSelectionModel, QEvent, QPoint, QTimer, QRect, QRectF
@@ -70,7 +70,7 @@ from pitch_shifter import PitchShifterDialog
 # ---------------------------------------------------------------------------
 # "Open with" column delegate — UG + Spotify icon buttons
 # ---------------------------------------------------------------------------
-_ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Images", "Icons")
+_ICON_DIR = _resource_path(os.path.join("Images", "Icons"))
 
 def _load_svg_renderer(filename):
     path = os.path.join(_ICON_DIR, filename)
@@ -166,7 +166,7 @@ class StarRatingDelegate(QStyledItemDelegate):
         painter.save()
 
         # Background — respect selection and alternating rows (dark theme)
-        if option.state & 0x0002:  # State_Selected
+        if option.state & QStyle.State_Selected:
             painter.fillRect(option.rect, option.palette.highlight())
         elif index.row() % 2 == 1:
             painter.fillRect(option.rect, QColor("#2a2a2d"))
@@ -646,19 +646,49 @@ class GuitarTabApp(QMainWindow):
         self.pitch_shifter_btn.clicked.connect(self.show_pitch_shifter)
         mode_layout.addWidget(self.pitch_shifter_btn)
 
-        checked_style = """
+        mode_btn_style = """
+QPushButton {
+    background-color: #28282e;
+    color: #888888;
+    border: 1px solid #38383e;
+    border-radius: 16px;
+    font-size: 12px;
+    padding: 6px 18px;
+    font-weight: 500;
+    min-width: 110px;
+}
+QPushButton:hover:!checked {
+    background-color: #333338;
+    color: #cccccc;
+    border-color: #555560;
+}
 QPushButton:checked {
     background-color: #e3ac63;
-    border: none;
-    color: black;
+    border-color: #e3ac63;
+    color: #1e1e22;
     font-weight: bold;
 }
 """
-        self.all_tabs_btn.setStyleSheet(checked_style)
-        self.learned_tabs_btn.setStyleSheet(checked_style)
-        self.pitch_shifter_btn.setStyleSheet(
-            checked_style + "QPushButton:hover { background-color: #e3ac63; }"
-        )
+        pitch_btn_style = """
+QPushButton {
+    background-color: #28282e;
+    color: #888888;
+    border: 1px solid #38383e;
+    border-radius: 16px;
+    font-size: 12px;
+    padding: 6px 18px;
+    font-weight: 500;
+    min-width: 110px;
+}
+QPushButton:hover {
+    background-color: #333338;
+    color: #e3ac63;
+    border-color: #e3ac63;
+}
+"""
+        self.all_tabs_btn.setStyleSheet(mode_btn_style)
+        self.learned_tabs_btn.setStyleSheet(mode_btn_style)
+        self.pitch_shifter_btn.setStyleSheet(pitch_btn_style)
 
         top_controls.addLayout(mode_layout)
         top_controls.addStretch(1)
@@ -715,6 +745,17 @@ QPushButton:checked {
         self.filter_text.setPlaceholderText("Type to filter...  [Ctrl+F]")
         self.filter_text.textChanged.connect(self.apply_filter)
         filter_layout.addWidget(self.filter_text)
+
+        self._clear_filter_btn = QPushButton("×")
+        self._clear_filter_btn.setFixedSize(22, 22)
+        self._clear_filter_btn.setToolTip("Clear filter")
+        self._clear_filter_btn.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: #666666; "
+            "font-size: 14px; font-weight: bold; padding: 0; }"
+            "QPushButton:hover { color: #e0e0e0; }"
+        )
+        self._clear_filter_btn.clicked.connect(self.filter_text.clear)
+        filter_layout.addWidget(self._clear_filter_btn)
 
         filter_layout.addWidget(QLabel("Rating:"))
         self.rating_filter = QComboBox()
@@ -1808,43 +1849,53 @@ QPushButton:checked {
         self.setWindowFlags(Qt.FramelessWindowHint)
 
         title_bar = QWidget()
-        title_bar.setFixedHeight(40)
-        title_bar.setStyleSheet("background-color: #3a3a3a;")
+        title_bar.setFixedHeight(38)
+        title_bar.setStyleSheet(
+            "QWidget { background-color: #17171b; border-bottom: 1px solid #2a2a30; }"
+        )
 
         lyt = QHBoxLayout(title_bar)
-        lyt.setContentsMargins(10, 0, 10, 0)
-        lyt.setSpacing(5)
+        lyt.setContentsMargins(12, 0, 6, 0)
+        lyt.setSpacing(4)
 
         title_label = QLabel("GuitarTabs")
-        title_label.setStyleSheet("color: white; font-weight: bold;")
+        title_label.setStyleSheet(
+            "color: #e3ac63; font-weight: bold; font-size: 13px; background: transparent; border: none;"
+        )
         lyt.addWidget(title_label)
         lyt.addStretch()
 
-        btn_style = """
+        wm_btn_base = """
 QPushButton {
     background-color: transparent;
-    color: white;
+    color: #888888;
     border: none;
-    font-size: 16px;
-    font-family: Arial;
+    font-size: 15px;
+    font-family: "Segoe UI Symbol", Arial;
     padding: 0;
     margin: 0;
+    border-radius: 4px;
 }
-QPushButton:hover { background-color: #555555; }
+QPushButton:hover { background-color: #2e2e34; color: #e0e0e0; }
 """
-        min_btn = QPushButton("_")
-        min_btn.setFixedSize(30, 30)
-        min_btn.setStyleSheet(btn_style)
+        min_btn = QPushButton("─")
+        min_btn.setFixedSize(32, 28)
+        min_btn.setStyleSheet(wm_btn_base)
+        min_btn.setToolTip("Minimize")
         min_btn.clicked.connect(self.showMinimized)
 
         max_btn = QPushButton("□")
-        max_btn.setFixedSize(30, 30)
-        max_btn.setStyleSheet(btn_style)
+        max_btn.setFixedSize(32, 28)
+        max_btn.setStyleSheet(wm_btn_base)
+        max_btn.setToolTip("Maximize / Restore")
         max_btn.clicked.connect(self.toggleMaximized)
 
-        close_btn = QPushButton("×")
-        close_btn.setFixedSize(30, 30)
-        close_btn.setStyleSheet(btn_style + "QPushButton:hover { background-color: #E81123; }")
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(32, 28)
+        close_btn.setStyleSheet(
+            wm_btn_base + "QPushButton:hover { background-color: #C42B1C; color: #ffffff; }"
+        )
+        close_btn.setToolTip("Close")
         close_btn.clicked.connect(self.close)
 
         for b in (min_btn, max_btn, close_btn):

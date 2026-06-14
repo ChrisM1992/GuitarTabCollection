@@ -12,10 +12,6 @@ INFOS AND UPDATES
   - Styled printable HTML, opens in browser after save
 
 
-
-<<<<<<< HEAD
-
-
 BUG FIXES
 - Fixed a BUG where UI reloaded to landing Page when editing something
 - fixed a bug where it was not possible to edit Titles in the learned section

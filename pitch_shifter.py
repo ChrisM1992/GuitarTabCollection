@@ -520,7 +520,7 @@ class PitchShifterDialog(QDialog):
             # Generate summary
             self.generate_summary(pitch_shifts, special_strings)
             
-        except Exception:
+        except Exception as e:
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Error calculating pitch shift: {str(e)}")
     
@@ -559,41 +559,22 @@ class PitchShifterDialog(QDialog):
         """Generate summary text of tuning changes"""
         if not pitch_shifts:
             return
-            
-        # Find most common value
-        value_counts = {}
+
+        value_counts: dict = {}
         for val in pitch_shifts:
-            if val in value_counts:
-                value_counts[val] += 1
-            else:
-                value_counts[val] = 1
-        
-        mode_value = max(value_counts.items(), key=lambda x: x[1])[0]
-        mode_count = value_counts[mode_value]
-        
-        # Generate summary text
-        if mode_count == len(pitch_shifts):
-            # All strings change by the same amount
-            summary = f"Main shift: {mode_value:+d} semitones"
-            if mode_value > 0:
-                summary += f" (UP {abs(mode_value)})"
-            elif mode_value < 0:
-                summary += f" (DOWN {abs(mode_value)})"
-            else:
-                summary += " (NO CHANGE)"
+            value_counts[val] = value_counts.get(val, 0) + 1
+
+        mode_value = max(value_counts, key=value_counts.get)
+
+        if mode_value > 0:
+            direction = f"UP {abs(mode_value)}"
+        elif mode_value < 0:
+            direction = f"DOWN {abs(mode_value)}"
         else:
-            # Some strings are different
-            summary = f"Main shift: {mode_value:+d} semitones"
-            if mode_value > 0:
-                summary += f" (UP {abs(mode_value)})"
-            elif mode_value < 0:
-                summary += f" (DOWN {abs(mode_value)})"
-            else:
-                summary += " (NO CHANGE)"
-                
-            # Add info about special strings
-            if special_strings:
-                summary += f" with special tuning for strings: {', '.join(map(str, special_strings))}"
-        
-        # Set summary text
+            direction = "NO CHANGE"
+
+        summary = f"Main shift: {mode_value:+d} semitones ({direction})"
+        if special_strings:
+            summary += f"  ·  Special strings: {', '.join(map(str, special_strings))}"
+
         self.summary_label.setText(summary)
