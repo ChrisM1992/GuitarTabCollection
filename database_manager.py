@@ -458,4 +458,83 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    # ------------------------------------------------------------------
+    # Statistics
+    # ------------------------------------------------------------------
+    def get_stats(self):
+        """Return a dict of aggregated stats for the Statistics Dashboard."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT COUNT(*) FROM tabs")
+            total_tabs = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM learned_tabs")
+            total_learned = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(DISTINCT band_id) FROM tabs"
+            )
+            total_bands = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(DISTINCT genre) FROM tabs "
+                "WHERE genre IS NOT NULL AND genre != ''"
+            )
+            total_genres = cursor.fetchone()[0]
+
+            # Rating distribution (1–5); unrated = rating NULL or 0
+            cursor.execute(
+                "SELECT COALESCE(rating, 0), COUNT(*) FROM tabs "
+                "GROUP BY COALESCE(rating, 0) ORDER BY 1"
+            )
+            ratings = {str(r): c for r, c in cursor.fetchall()}
+
+            # Top 10 bands by tab count
+            cursor.execute("""
+                SELECT b.name, COUNT(t.id) AS cnt
+                FROM bands b JOIN tabs t ON b.id = t.band_id
+                GROUP BY b.id ORDER BY cnt DESC LIMIT 10
+            """)
+            top_bands = list(cursor.fetchall())
+
+            # Genre breakdown top 10
+            cursor.execute("""
+                SELECT genre, COUNT(*) AS cnt FROM tabs
+                WHERE genre IS NOT NULL AND genre != ''
+                GROUP BY genre ORDER BY cnt DESC LIMIT 10
+            """)
+            genres = list(cursor.fetchall())
+
+            # Tuning breakdown top 10
+            cursor.execute("""
+                SELECT tuning, COUNT(*) AS cnt FROM tabs
+                WHERE tuning IS NOT NULL AND tuning != ''
+                GROUP BY tuning ORDER BY cnt DESC LIMIT 10
+            """)
+            tunings = list(cursor.fetchall())
+
+            # Learned tabs per month
+            cursor.execute("""
+                SELECT strftime('%Y-%m', learned_date) AS month, COUNT(*) AS cnt
+                FROM learned_tabs
+                WHERE learned_date IS NOT NULL AND learned_date != ''
+                GROUP BY month ORDER BY month
+            """)
+            learned_by_month = list(cursor.fetchall())
+
+            return {
+                'total_tabs':       total_tabs,
+                'total_learned':    total_learned,
+                'total_bands':      total_bands,
+                'total_genres':     total_genres,
+                'ratings':          ratings,
+                'top_bands':        top_bands,
+                'genres':           genres,
+                'tunings':          tunings,
+                'learned_by_month': learned_by_month,
+            }
+        finally:
+            conn.close()
+
 

@@ -65,6 +65,7 @@ from database_manager import DatabaseManager
 from add_tab_dialog import AddTabDialog, StarRating
 from add_tab_multi import BatchAddDialog
 from pitch_shifter import PitchShifterDialog
+from stats_dashboard import StatsDashboard
 
 
 # ---------------------------------------------------------------------------
@@ -646,6 +647,10 @@ class GuitarTabApp(QMainWindow):
         self.pitch_shifter_btn.clicked.connect(self.show_pitch_shifter)
         mode_layout.addWidget(self.pitch_shifter_btn)
 
+        self.stats_btn = QPushButton("My Stats")
+        self.stats_btn.clicked.connect(self._open_stats_dashboard)
+        mode_layout.addWidget(self.stats_btn)
+
         mode_btn_style = """
 QPushButton {
     background-color: #28282e;
@@ -689,6 +694,7 @@ QPushButton:hover {
         self.all_tabs_btn.setStyleSheet(mode_btn_style)
         self.learned_tabs_btn.setStyleSheet(mode_btn_style)
         self.pitch_shifter_btn.setStyleSheet(pitch_btn_style)
+        self.stats_btn.setStyleSheet(pitch_btn_style)
 
         top_controls.addLayout(mode_layout)
         top_controls.addStretch(1)
@@ -1835,6 +1841,12 @@ QPushButton:hover {
         if isinstance(widget, QTableView) and isinstance(widget.model(), QSortFilterProxyModel):
             count = widget.model().rowCount()
         self.statusBar().showMessage(f"{tab_name}: {count} tab(s)")
+
+    # ------------------------------------------------------------------
+    # Statistics Dashboard
+    # ------------------------------------------------------------------
+    def _open_stats_dashboard(self):
+        StatsDashboard(self.db_manager, self).exec_()
 
     # ------------------------------------------------------------------
     # Pitch Shifter
