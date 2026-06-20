@@ -122,22 +122,31 @@ To use Spotify features, you need to register a Spotify Developer application:
 
 ---
 
-## 📊 Screenshots
+## � Screenshots
 
 ### Main Tab Collection View
-All your tabs organized in a beautiful dark theme with star ratings, tuning info, and one-click links to Ultimate Guitar or Spotify.
+![Main View](https://via.placeholder.com/800x600?text=Main+Tab+Collection+View)
+*The main interface showing your complete tab collection with Band, Album, Title, Tuning, Rating, and Genre columns. Dark theme with Ultimate Guitar and Spotify quick-access buttons.*
 
 ### Now Playing Display
-```
-GuitarTabs     🟢 Currently Playing: Artist – Song Title     ─ □ ✕
-```
-Click to search for that song on Ultimate Guitar!
+![Now Playing](https://via.placeholder.com/800x50?text=Currently+Playing:+Artist+Title)
+*Spotify integration in the title bar showing the current track with green Spotify icon. Click to search on Ultimate Guitar!*
 
 ### Statistics Dashboard
-Visual breakdown of your collection:
-- Total tabs learned/unlearned
-- Genre distribution
-- Rating breakdown chart
+![Stats Dashboard](https://via.placeholder.com/800x600?text=Statistics+Dashboard)
+*Visual breakdown of your learning progress with charts showing total tabs, learned vs. unlearned, genre distribution, and rating breakdown.*
+
+### Add Tab Dialog
+![Add Tab](https://via.placeholder.com/600x400?text=Add+New+Tab+Dialog)
+*User-friendly form to add tabs with Band, Album, Title, Tuning, Genre, Notes, and rating selection.*
+
+### Pitch Shifter Tool
+![Pitch Shifter](https://via.placeholder.com/400x300?text=Pitch+Shifter+Tool)
+*Adjust song pitch in semitones with intuitive controls.*
+
+---
+
+## 📊 Screenshots
 
 ---
 
