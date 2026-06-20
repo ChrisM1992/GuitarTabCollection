@@ -66,6 +66,7 @@ from add_tab_dialog import AddTabDialog, StarRating
 from add_tab_multi import BatchAddDialog
 from pitch_shifter import PitchShifterDialog
 from stats_dashboard import StatsDashboard
+from spotify_client import SpotifyClient
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +90,19 @@ def _svg_to_icon(filename, size=18):
     QSvgRenderer(path).render(p, QRectF(0, 0, size, size))
     p.end()
     return QIcon(px)
+
+
+# ---------------------------------------------------------------------------
+# Clickable label for "Now Playing" Spotify track
+# ---------------------------------------------------------------------------
+class ClickableLabel(QLabel):
+    """A QLabel that can be clicked and emits a signal."""
+    clicked = None  # Will be set to a callable when needed
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.clicked:
+            self.clicked()
+        super().mousePressEvent(event)
 
 
 class OpenWithDelegate(QStyledItemDelegate):
@@ -610,6 +624,15 @@ class GuitarTabApp(QMainWindow):
         self._title_checker  = TitleChecker(self)
         self._suggestion_bar = None
 
+        self._spotify_artist = ""
+        self._spotify_title  = ""
+        self._now_playing_label = None  # created in setupCustomTitleBar
+        self._spotify = SpotifyClient(self)
+        self._spotify.track_changed.connect(self._on_spotify_track_changed)
+        self._spotify.track_stopped.connect(self._on_spotify_track_stopped)
+        self._spotify.auth_success.connect(self._on_spotify_auth_success)
+        self._spotify.auth_error.connect(self._on_spotify_auth_error)
+
         try:
             self.db_manager.clean_up_empty_bands()
         except Exception as e:
@@ -619,6 +642,7 @@ class GuitarTabApp(QMainWindow):
         self.initUI()
         self.load_data(preserve_tab=False)
         self.setupCustomTitleBar()
+        self._spotify_init_from_settings()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -1393,6 +1417,19 @@ QPushButton:hover {
         export_menu.addAction("Export DB",  self.backup_database)
 
         menu.addSeparator()
+
+        if self._spotify.is_authenticated():
+            sp_action = menu.addAction(
+                _svg_to_icon("spotify-svgrepo-com.svg", 16), "Spotify trennen"
+            )
+            sp_action.triggered.connect(self._disconnect_spotify)
+        else:
+            sp_action = menu.addAction(
+                _svg_to_icon("spotify-svgrepo-com.svg", 16), "Spotify verbinden"
+            )
+            sp_action.triggered.connect(self._connect_spotify)
+
+        menu.addSeparator()
         menu.addAction("Settings", self.show_settings)
 
         menu.exec_(self.menu_btn.mapToGlobal(QPoint(0, self.menu_btn.height())))
@@ -1855,6 +1892,132 @@ QPushButton:hover {
         PitchShifterDialog(self.db_manager, self).exec_()
 
     # ------------------------------------------------------------------
+    # Spotify integration
+    # ------------------------------------------------------------------
+    def _spotify_init_from_settings(self):
+        cid  = self._settings.get('spotify_client_id',     '')
+        csec = self._settings.get('spotify_client_secret', '')
+        rtok = self._settings.get('spotify_refresh_token', '')
+        if cid and csec:
+            self._spotify.configure(cid, csec)
+            if rtok:
+                self._spotify.set_refresh_token(rtok)
+                self._spotify.start_polling()
+
+    def _on_spotify_auth_success(self):
+        if self._spotify._refresh_token:
+            self._settings['spotify_refresh_token'] = self._spotify._refresh_token
+            self._save_settings()
+        self._spotify.start_polling()
+        self.statusBar().showMessage("Spotify verbunden ✓")
+
+    def _on_spotify_auth_error(self, msg: str):
+        QMessageBox.warning(self, "Spotify Fehler", msg)
+
+    def _on_spotify_track_changed(self, artist: str, title: str):
+        self._spotify_artist = artist
+        self._spotify_title  = title
+        text = f"<b>Currently Playing:</b> {artist} – {title}"
+        if len(text) > 80:
+            text = text[:77] + "…"
+        if self._now_playing_label:
+            self._now_playing_label.setText(text)
+            self._now_playing_label.setToolTip(
+                f"{artist} – {title}\nKlicken zum Öffnen auf Ultimate Guitar"
+            )
+            self._now_playing_container.show()
+
+    def _on_spotify_track_stopped(self):
+        self._spotify_artist = ""
+        self._spotify_title  = ""
+        if self._now_playing_container:
+            self._now_playing_container.hide()
+
+    def _spotify_now_playing_clicked(self):
+        if self._spotify_artist or self._spotify_title:
+            self.searchTabOnline(self._spotify_artist, self._spotify_title)
+
+    def _connect_spotify(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Spotify verbinden")
+        dlg.setMinimumWidth(460)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 16, 20, 16)
+
+        hint = QLabel(
+            "1. <a href='https://developer.spotify.com/dashboard' style='color:#1db954'>"
+            "Spotify Developer Dashboard</a> öffnen<br>"
+            "2. Neue App erstellen (beliebiger Name)<br>"
+            "3. Unter <b>Redirect URIs</b> eintragen:&nbsp; "
+            "<b>http://127.0.0.1:8765/callback</b><br>"
+            "4. Client ID und Secret hier einfügen:"
+        )
+        hint.setOpenExternalLinks(True)
+        hint.setTextFormat(Qt.RichText)
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #bbbbbb; font-size: 11px;")
+        layout.addWidget(hint)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("color: #3a3a3e;")
+        layout.addWidget(sep)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+        cid_edit  = QLineEdit(self._settings.get('spotify_client_id', ''))
+        cid_edit.setPlaceholderText("z.B. 1a2b3c4d5e6f…")
+        csec_edit = QLineEdit(self._settings.get('spotify_client_secret', ''))
+        csec_edit.setPlaceholderText("z.B. abc123def456…")
+        csec_edit.setEchoMode(QLineEdit.Password)
+        form.addRow("Client ID:", cid_edit)
+        form.addRow("Client Secret:", csec_edit)
+        layout.addLayout(form)
+
+        status_lbl = QLabel("")
+        status_lbl.setWordWrap(True)
+        status_lbl.setStyleSheet("font-size: 11px;")
+        layout.addWidget(status_lbl)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.button(QDialogButtonBox.Ok).setText("Verbinden")
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+
+        def _on_connect():
+            cid  = cid_edit.text().strip()
+            csec = csec_edit.text().strip()
+            if not cid or not csec:
+                status_lbl.setText(
+                    "<font color='#e05c5c'>Client ID und Secret sind erforderlich.</font>"
+                )
+                return
+            self._settings['spotify_client_id']     = cid
+            self._settings['spotify_client_secret'] = csec
+            self._save_settings()
+            self._spotify.configure(cid, csec)
+            self._spotify.start_auth()
+            status_lbl.setText(
+                "<font color='#1db954'>Browser geöffnet – bitte Spotify-Konto "
+                "autorisieren und dann zurückkehren…</font>"
+            )
+            btns.button(QDialogButtonBox.Ok).setEnabled(False)
+            QTimer.singleShot(2500, dlg.accept)
+
+        btns.accepted.connect(_on_connect)
+        dlg.exec_()
+
+    def _disconnect_spotify(self):
+        self._spotify.disconnect_account()
+        self._settings.pop('spotify_refresh_token', None)
+        self._save_settings()
+        if self._now_playing_label:
+            self._now_playing_label.hide()
+        self.statusBar().showMessage("Spotify getrennt.")
+
+    # ------------------------------------------------------------------
     # Custom title bar
     # ------------------------------------------------------------------
     def setupCustomTitleBar(self):
@@ -1875,6 +2038,42 @@ QPushButton:hover {
             "color: #e3ac63; font-weight: bold; font-size: 13px; background: transparent; border: none;"
         )
         lyt.addWidget(title_label)
+        lyt.addStretch()
+
+        # Now Playing container: icon + text
+        now_playing_container = QWidget()
+        now_playing_container.setCursor(Qt.PointingHandCursor)
+        now_playing_lyt = QHBoxLayout(now_playing_container)
+        now_playing_lyt.setContentsMargins(0, 0, 0, 0)
+        now_playing_lyt.setSpacing(6)
+
+        # Spotify icon
+        self._now_playing_icon = QLabel()
+        self._now_playing_icon.setFixedSize(18, 18)
+        self._now_playing_icon.setStyleSheet("background: transparent; border: none;")
+        spotify_icon_path = os.path.join(_ICON_DIR, "spotify-svgrepo-com.svg")
+        if os.path.exists(spotify_icon_path):
+            px = QPixmap(18, 18)
+            px.fill(Qt.transparent)
+            p = QPainter(px)
+            QSvgRenderer(spotify_icon_path).render(p, QRectF(0, 0, 18, 18))
+            p.end()
+            self._now_playing_icon.setPixmap(px)
+        now_playing_lyt.addWidget(self._now_playing_icon)
+
+        # Text label
+        self._now_playing_label = ClickableLabel()
+        self._now_playing_label.setStyleSheet(
+            "QLabel { color: #1db954; font-size: 11px; background: transparent; border: none; padding: 0 8px; }"
+            "QLabel:hover { color: #1ed760; }"
+        )
+        self._now_playing_label.setToolTip("Auf Ultimate Guitar öffnen")
+        now_playing_lyt.addWidget(self._now_playing_label)
+        now_playing_container.hide()
+        now_playing_container.mousePressEvent = lambda _e: self._spotify_now_playing_clicked()
+        self._now_playing_container = now_playing_container
+
+        lyt.addWidget(now_playing_container)
         lyt.addStretch()
 
         wm_btn_base = """
