@@ -35,18 +35,19 @@
 - Notes field with date picker support
 
 ### 🎓 Learning Tracking
-- Mark tabs as "Learned" or "Unlearned"
-- View dedicated "Learned" tab collection
+- Mark tabs as "In Practice List" or remove them
+- View dedicated "Practice List" collection
 - Bulk operations on selected tabs
 - Statistics dashboard showing:
   - Total tabs in collection
-  - Learned vs. unlearned count
+  - Practice list count
   - Genre breakdown
   - Rating distribution
 
 ### 🎵 Spotify Integration
 - **Connect your Spotify account** with OAuth
 - **Now Playing display** in the title bar with Spotify icon
+- **One-click "Add" button** to instantly add current track to Practice List
 - **One-click search** on Ultimate Guitar for current song
 - Automatically resume where you left off
 - Green, clickable now playing label
@@ -102,7 +103,7 @@
 3. **Start adding tabs**
    - Click "+" button or use `Ctrl+N`
    - Fill in Band, Album, Title, Tuning, Genre, Notes
-   - Set rating and learning status
+   - Set rating and add to Practice List
 
 ---
 
@@ -122,31 +123,53 @@ To use Spotify features, you need to register a Spotify Developer application:
 
 ---
 
-## � Screenshots
+## 🎨 Features Overview
 
 ### Main Tab Collection View
-![Main View](https://via.placeholder.com/800x600?text=Main+Tab+Collection+View)
 *The main interface showing your complete tab collection with Band, Album, Title, Tuning, Rating, and Genre columns. Dark theme with Ultimate Guitar and Spotify quick-access buttons.*
 
-### Now Playing Display
-![Now Playing](https://via.placeholder.com/800x50?text=Currently+Playing:+Artist+Title)
-*Spotify integration in the title bar showing the current track with green Spotify icon. Click to search on Ultimate Guitar!*
+**What you see:**
+- Full tab database with search and filter
+- Inline star rating system (1-5 stars)
+- Quick access buttons to Ultimate Guitar and Spotify
+- Sort and organize tabs by artist and genre
 
-### Statistics Dashboard
-![Stats Dashboard](https://via.placeholder.com/800x600?text=Statistics+Dashboard)
-*Visual breakdown of your learning progress with charts showing total tabs, learned vs. unlearned, genre distribution, and rating breakdown.*
+### Now Playing Display (Spotify Integration)
+*Spotify integration in the title bar showing the current track with green Spotify icon.*
 
-### Add Tab Dialog
-![Add Tab](https://via.placeholder.com/600x400?text=Add+New+Tab+Dialog)
-*User-friendly form to add tabs with Band, Album, Title, Tuning, Genre, Notes, and rating selection.*
+**Features:**
+- Shows currently playing song from Spotify in real-time
+- Clickable link to search the track on Ultimate Guitar
+- **"+ Add"** button to instantly add track to Practice List
+- Auto-updates every 5 seconds when music is playing
 
-### Pitch Shifter Tool
-![Pitch Shifter](https://via.placeholder.com/400x300?text=Pitch+Shifter+Tool)
-*Adjust song pitch in semitones with intuitive controls.*
+### Statistics Dashboard  
+*Visual analytics showing your learning progress at a glance.*
 
----
+**Shows:**
+- Total tabs and learning statistics
+- Rating distribution chart
+- Top bands by tab count
+- Genre breakdown
+- Completion percentage
 
-## 📊 Screenshots
+### Practice List
+*Dedicated view for tracks you're learning or want to learn.*
+
+**Features:**
+- All your practice tracks with learning dates
+- Ratings and genre classification
+- Track your progress and learning journey
+- Add tracks via one-click or context menu
+
+### Pitch Calculator Tool
+*Built-in tool to adjust song tunings to your preference.*
+
+**Features:**
+- Select guitar type (6-string or 7-string)
+- Choose target tuning
+- Get detailed pitch shift information per string
+- Add tunings to your collection
 
 ---
 
@@ -173,14 +196,20 @@ GuitarTabCollection/
 ├── pitch_shifter.py        # Pitch adjustment tool
 ├── stats_dashboard.py      # Statistics visualization
 ├── guitar_tabs.db          # SQLite database (auto-created)
-└── settings.json           # User settings & Spotify tokens
+├── settings.json           # User settings & Spotify tokens
+└── docs/screenshots/       # Screenshot assets
 ```
 
 ---
 
 ## 📝 Recent Updates
 
-### v0.46 - Spotify Now Playing Display (Latest)
+### v0.47 - Practice List & Spotify One-Click (Latest)
+- ✅ Renamed "Learned" to "Practice List"
+- ✅ Added one-click "+ Add" button for Spotify tracks
+- ✅ Improved UI terminology
+
+### v0.46 - Spotify Now Playing Display
 - ✅ Fixed Spotify "Now Playing" display in title bar
 - ✅ Added ClickableLabel for proper mouse event handling
 - ✅ Implemented Spotify icon in now playing section
@@ -245,8 +274,8 @@ For issues, questions, or feature requests:
 - Keep your Spotify app running for accurate "Now Playing" updates
 - Your Spotify token refresh automatically
 - Click the green "Currently Playing" text to search on Ultimate Guitar
+- Use the **"+ Add"** button to quickly build your Practice List
 
 ---
 
 **Made with ❤️ for guitarists everywhere** 🎸
-
