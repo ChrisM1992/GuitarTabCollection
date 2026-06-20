@@ -4,6 +4,7 @@ import re
 import csv
 import io
 import json
+import sqlite3
 import zipfile
 import shutil
 import traceback
@@ -662,7 +663,7 @@ class GuitarTabApp(QMainWindow):
         self.all_tabs_btn.clicked.connect(lambda: self.switch_mode("all"))
         mode_layout.addWidget(self.all_tabs_btn)
 
-        self.learned_tabs_btn = QPushButton("Learned")
+        self.learned_tabs_btn = QPushButton("Practice List")
         self.learned_tabs_btn.setCheckable(True)
         self.learned_tabs_btn.clicked.connect(lambda: self.switch_mode("learned"))
         mode_layout.addWidget(self.learned_tabs_btn)
@@ -928,15 +929,15 @@ QPushButton:hover {
             empty = QWidget()
             lyt   = QVBoxLayout(empty)
             lbl   = QLabel(
-                "No learned tabs yet.\n"
-                "Right-click a tab in 'Tabs Collection' to mark it as learned."
+                "No tabs in your practice list yet.\n"
+                "Right-click a tab in 'Tabs Collection' to add it to your practice list."
             )
             lbl.setAlignment(Qt.AlignCenter)
             lyt.addWidget(lbl)
-            self.tabs_widget.addTab(empty, "Learned")
+            self.tabs_widget.addTab(empty, "Practice List")
             return
 
-        self.tabs_widget.addTab(self._build_table_view(learned_tabs, columns), "All Learned")
+        self.tabs_widget.addTab(self._build_table_view(learned_tabs, columns), "All Practice")
 
         band_map       = {}
         general        = []
@@ -1053,11 +1054,11 @@ QPushButton:hover {
 
             if self.current_view == "all":
                 learned_action = menu.addAction(
-                    f"Mark {n} as Learned" if n > 1 else "Mark as Learned"
+                    f"Add {n} to Practice List" if n > 1 else "Add to Practice List"
                 )
             else:
                 remove_action = menu.addAction(
-                    f"Remove {n} from Learned" if n > 1 else "Remove from Learned"
+                    f"Remove {n} from Practice List" if n > 1 else "Remove from Practice List"
                 )
 
             menu.addSeparator()
@@ -1926,16 +1927,90 @@ QPushButton:hover {
                 f"{artist} – {title}\nKlicken zum Öffnen auf Ultimate Guitar"
             )
             self._now_playing_container.show()
+            if self._add_to_practice_btn:
+                self._add_to_practice_btn.show()
 
     def _on_spotify_track_stopped(self):
         self._spotify_artist = ""
         self._spotify_title  = ""
         if self._now_playing_container:
             self._now_playing_container.hide()
+        if self._add_to_practice_btn:
+            self._add_to_practice_btn.hide()
 
     def _spotify_now_playing_clicked(self):
         if self._spotify_artist or self._spotify_title:
             self.searchTabOnline(self._spotify_artist, self._spotify_title)
+
+    def _add_spotify_to_practice(self):
+        """Add currently playing Spotify track to Practice List."""
+        if not self._spotify_artist or not self._spotify_title:
+            self.statusBar().showMessage("No track currently playing")
+            return
+
+        try:
+            # Prepare tab data
+            tab_data = {
+                "band": self._spotify_artist,
+                "album": "",
+                "title": self._spotify_title,
+                "tuning": "E A D G B E",  # Standard tuning
+                "rating": 0,
+                "genre": "Spotify",
+                "notes": "Added from Spotify Now Playing",
+                "is_seven_string": False
+            }
+
+            # Check if tab already exists
+            exists = self.db_manager.tab_exists(
+                self._spotify_artist, "", self._spotify_title
+            )
+
+            if exists:
+                # Tab exists - just need to find and mark as learned
+                conn = sqlite3.connect(self.db_manager.db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM bands WHERE name = ?", (self._spotify_artist,))
+                band_result = cursor.fetchone()
+                if band_result:
+                    cursor.execute(
+                        "SELECT id FROM tabs WHERE band_id = ? AND title = ?",
+                        (band_result[0], self._spotify_title)
+                    )
+                    tab_result = cursor.fetchone()
+                    if tab_result:
+                        self.db_manager.mark_as_learned(tab_result[0])
+                conn.close()
+                self.statusBar().showMessage(
+                    f"✓ '{self._spotify_title}' added to Practice List"
+                )
+            else:
+                # Add new tab
+                self.db_manager.add_tab(tab_data)
+                # Now find it and mark as learned
+                conn = sqlite3.connect(self.db_manager.db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM bands WHERE name = ?", (self._spotify_artist,))
+                band_result = cursor.fetchone()
+                if band_result:
+                    cursor.execute(
+                        "SELECT id FROM tabs WHERE band_id = ? AND title = ?",
+                        (band_result[0], self._spotify_title)
+                    )
+                    tab_result = cursor.fetchone()
+                    if tab_result:
+                        self.db_manager.mark_as_learned(tab_result[0])
+                conn.close()
+                self.statusBar().showMessage(
+                    f"✓ '{self._spotify_title}' by {self._spotify_artist} added to Practice List"
+                )
+
+            # Refresh data
+            self.load_data(preserve_tab=True)
+
+        except Exception as e:
+            self.statusBar().showMessage(f"Error: {str(e)[:50]}")
+            print(f"Error adding to Practice List: {e}")
 
     def _connect_spotify(self):
         dlg = QDialog(self)
@@ -2069,6 +2144,19 @@ QPushButton:hover {
         )
         self._now_playing_label.setToolTip("Auf Ultimate Guitar öffnen")
         now_playing_lyt.addWidget(self._now_playing_label)
+
+        # "Add to Practice List" button
+        self._add_to_practice_btn = QPushButton("+ Add")
+        self._add_to_practice_btn.setStyleSheet(
+            "QPushButton { color: #1db954; background: transparent; border: 1px solid #1db954; border-radius: 3px; "
+            "padding: 2px 6px; font-size: 10px; } "
+            "QPushButton:hover { background: #1db954; color: #17171b; }"
+        )
+        self._add_to_practice_btn.setToolTip("Add this song to your Practice List")
+        self._add_to_practice_btn.clicked.connect(self._add_spotify_to_practice)
+        self._add_to_practice_btn.hide()
+        now_playing_lyt.addWidget(self._add_to_practice_btn)
+
         now_playing_container.hide()
         now_playing_container.mousePressEvent = lambda _e: self._spotify_now_playing_clicked()
         self._now_playing_container = now_playing_container
